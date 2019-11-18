@@ -144,9 +144,8 @@ static void zmsg_pop_s (zmsg_t *msg, std::string & s)
         zmsg_pop_s(resp, reason);
         CLEANUP;
         log_error ("received %s status (reason: %s) from mlm client", rx_status.c_str(), reason.c_str ());
-        http_die ("internal-error", JSONIFY (reason.c_str ()).c_str ());
-        //std::string err = TRANSLATE_ME("Received %s status (reason: %s).", rx_status.c_str(), reason.c_str ());
-        //http_die ("internal-error", err.c_str());
+        http_die ("request-param-bad", "dc_id", asset_id.c_str(), JSONIFY (reason.c_str ()).c_str ());
+        //http_die ("internal-error", JSONIFY (reason.c_str ()).c_str ());
     }
 
     // result JSON payload
