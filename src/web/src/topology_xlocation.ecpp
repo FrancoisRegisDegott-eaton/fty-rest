@@ -105,6 +105,7 @@ bool database_ready;
     log_trace ("%s, parameter_name: '%s', asset_id: '%s'",
         request.getUrl().c_str (), parameter_name.c_str (), asset_id.c_str ());
 
+    // builtin argument list
     std::string argList = parameter_name + ": " + asset_id;
 
     // get options (depend on parameter_name)
@@ -259,7 +260,6 @@ bool database_ready;
         CLEANUP;
         log_error ("received %s status (reason: %s) from mlm client", rx_status.c_str(), reason.c_str ());
         http_die ("request-param-bad", parameter_name.c_str(), argList.c_str(), JSONIFY (reason.c_str ()).c_str ());
-        //http_die ("request-param-bad", parameter_name.c_str(), asset_id.c_str(), JSONIFY (reason.c_str ()).c_str ());
     }
 
     // result JSON payload
