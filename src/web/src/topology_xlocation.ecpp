@@ -105,12 +105,18 @@ bool database_ready;
     log_trace ("%s, parameter_name: '%s', asset_id: '%s'",
         request.getUrl().c_str (), parameter_name.c_str (), asset_id.c_str ());
 
+    std::string argList = parameter_name + ": " + asset_id;
+
     // get options (depend on parameter_name)
     std::string options;
     {
         std::string filter = qparam.param("filter");
         std::string feed_by = qparam.param("feed_by");
         std::string recursive = qparam.param("recursive");
+
+        if (!filter.empty()) argList += ", filter: " + filter;
+        if (!feed_by.empty()) argList += ", feed_by: " + feed_by;
+        if (!recursive.empty()) argList += ", recursive: " + recursive;
 
         if (parameter_name == "to") {
             // not-empty count
@@ -252,7 +258,8 @@ bool database_ready;
         zmsg_pop_s(resp, reason);
         CLEANUP;
         log_error ("received %s status (reason: %s) from mlm client", rx_status.c_str(), reason.c_str ());
-        http_die ("request-param-bad", parameter_name.c_str(), asset_id.c_str(), JSONIFY (reason.c_str ()).c_str ());
+        http_die ("request-param-bad", parameter_name.c_str(), argList.c_str(), JSONIFY (reason.c_str ()).c_str ());
+        //http_die ("request-param-bad", parameter_name.c_str(), asset_id.c_str(), JSONIFY (reason.c_str ()).c_str ());
     }
 
     // result JSON payload
