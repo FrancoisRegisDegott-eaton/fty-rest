@@ -234,8 +234,6 @@ src/web/src/license_POST.cc
 src/web/src/time.cc
 src/web/src/current.cc
 src/web/src/datacenter_indicators.cc
-src/web/src/topology_location_from.cc
-src/web/src/topology_location_to.cc
 src/web/src/topology_input_power_chain.cc
 src/web/src/topology_location.cc
 src/web/src/topology_power.cc
@@ -263,7 +261,6 @@ src/web/src/gpo_action.cc
 src/web/src/email_feedback.cc
 src/web/src/email_test.cc
 src/web/src/email_vote.cc
-src/web/src/input_power_chain.cc
 src/web/src/info.cc
 src/web/src/conf_scan.cc
 src/web/src/scan_run.cc
@@ -272,7 +269,6 @@ src/web/src/list_gpio.cc
 src/web/src/add_gpio.cc
 src/web/src/server_status.cc
 src/web/src/security_headers.cc
-src/web/src/topology_location_from2.cc
 src/web/src/hw_capability.cc
 src/web/src/security_removeheaders.cc
 src/web/src/find_access_token.cc
