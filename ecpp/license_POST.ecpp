@@ -140,7 +140,7 @@ bool database_ready;
             logError(ret.error());
             http_die("internal-error", ret.error().c_str());
         }
-        auto rv_svc = proc.wait(10000);
+        auto rv_svc = proc.wait(5000);
         proc_out = proc.readAllStandardOutput();
         proc_err = proc.readAllStandardError();
         proc.kill();
@@ -155,11 +155,8 @@ bool database_ready;
         }
         if (!rv_svc || *rv_svc != 0) {
             log_error ("Starting of start-db-services have failed. Consult system logs");
-            log_error ("%s failed with code %d.\n===== STDOUT: =====\n%s\n===== STDERR: =====\n%s\n=====",
-                "/usr/libexec/fty/start-db-services", *rv_svc, proc_out.c_str (), proc_err.c_str ());
-            if (!rv_svc) {
-                logError("--------------{}----------------", rv_svc.error());
-            }
+            log_error ("%s failed with error %s.\n===== STDOUT: =====\n%s\n===== STDERR: =====\n%s\n=====",
+                "/usr/libexec/fty/start-db-services", rv_svc.error().c_str(), proc_out.c_str (), proc_err.c_str ());
 
             if (rv_svc.error() != "timeout") {
                 std::string err =  TRANSLATE_ME ("Starting of start-db-services have failed. Consult system logs");
