@@ -546,6 +546,7 @@ void export_asset_json(std::ostream& out, std::set<std::string>* listElements)
         cxxtools::Regex               r_outlet_label("^outlet\\.[0-9][0-9]*\\.label$");
         cxxtools::Regex               r_outlet_group("^outlet\\.[0-9][0-9]*\\.group$");
         cxxtools::Regex               r_outlet_type("^outlet\\.[0-9][0-9]*\\.type$");
+        cxxtools::Regex               r_outlet_switchable("^outlet\\.[0-9][0-9]*\\.switchable");
         std::map<std::string, Outlet> outlets;
 
         // Print extended attributes
@@ -587,6 +588,34 @@ void export_asset_json(std::ostream& out, std::set<std::string>* listElements)
                     it->second.type_r = k.second.second;
                     continue;
                 }
+                // for ups programmable outlet
+                else if (r_outlet_switchable.match(k.first))
+                {
+                    auto oNumber = getOutletNumber(k.first);
+                    auto it = outlets.find(oNumber);
+                    if (it == outlets.cend())
+                    {
+                        outlets.emplace(oNumber, Outlet());
+                    }
+                }
+                // for ups master outlet
+                else if (k.first == "outlet.switchable") {
+                    auto it = outlets.find("0");
+                    if (it == outlets.cend())
+                    {
+                        outlets.emplace("0", Outlet());
+                    }
+                }
+                else if (k.first == "outlet.label") {
+                    auto it = outlets.find("0");
+                    if (it == outlets.cend())
+                    {
+                        auto r1 = outlets.emplace("0", Outlet());
+                        it = r1.first;
+                    }
+                    it->second.label = k.second.first;
+                    it->second.label_r = k.second.second;
+                }
                 // print valid info
                 cxxtools::SerializationInfo& si_ext_obj = si_asset_ext_list.addMember("");
                 si_ext_obj.addMember(k.first) <<= k.second.first;
@@ -612,8 +641,15 @@ void export_asset_json(std::ostream& out, std::set<std::string>* listElements)
 
                 cxxtools::SerializationInfo& si_outlet_label = si_outlet_x.addMember("");
                 si_outlet_label.addMember("name") <<= "label";
-                si_outlet_label.addMember("value") <<= oneOutlet.second.label;
-                si_outlet_label.addMember("read_only") <<= oneOutlet.second.label_r;
+                // if label is empty, get index value
+                if(!oneOutlet.second.label.empty()) {
+                    si_outlet_label.addMember("value") <<= oneOutlet.second.label;
+                    si_outlet_label.addMember("read_only") <<= oneOutlet.second.label_r;
+                }
+                else {
+                    si_outlet_label.addMember("value") <<= oneOutlet.first;
+                    si_outlet_label.addMember("read_only") <<= true;
+                }
 
                 if (!oneOutlet.second.group.empty()) {
                     cxxtools::SerializationInfo& si_outlet_group = si_outlet_x.addMember("");
