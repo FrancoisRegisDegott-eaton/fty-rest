@@ -130,6 +130,8 @@ bool database_ready;
         log_info ("Starting db service, timestamp=%" PRIu64 " ..." , tme_start);
         std::string proc_out, proc_err;
 
+        sleep(10);
+
         // due to some OS circumstances, the script can sometimes block
         // while calling the /bin/systemctl and is eventually killed,
         // even though the actual services of our product have started
