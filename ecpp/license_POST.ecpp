@@ -142,7 +142,7 @@ bool database_ready;
             logError(ret.error());
             http_die("internal-error", ret.error().c_str());
         }
-        auto rv_svc = proc.wait(5000);
+        auto rv_svc = proc.wait(15000);
         proc_out = proc.readAllStandardOutput();
         proc_err = proc.readAllStandardError();
         proc.kill();
