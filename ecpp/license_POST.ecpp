@@ -169,17 +169,32 @@ bool database_ready;
             // subprocess timeout handling - fall through to try using DB
 
             {
-                fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-engine"};
-                // This should get our "systemctl" wrapper via PATH
                 std::string proc_out1, proc_err1;
+                int lastResult = 0;
+                for (int i = 0; i < 10; ++i) {
+                    fty::Process::Arguments proc_cmd = {"systemctl", "list-ipm-units", "--active", "fty-db-engine"};
+                    // This should get our "systemctl" wrapper via PATH
 
-                auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
+                    auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
 
-                if (*rv != 0) {
+                    if (!rv) {
+                        logError(rv.error());
+                        log_error_audit ("Request CREATE license FAILED");
+                        http_die ("internal-error", TRANSLATE_ME ("Database software service is not running").c_str());
+                    }
+
+                    lastResult = *rv;
+                    if (*rv != 0) {
+                        sleep(5);
+                        continue;
+                    }
+                }
+
+                if (lastResult != 0) {
                     std::string message;
                     message = "`sudo systemctl list-ipm-units --active fty-db-engine`"
                         " failed (service is not currently active). Return value = '"
-                        + std::to_string (*rv) + "', stderr = '" + proc_err1 + "'." ;
+                        + std::to_string (lastResult) + "', stderr = '" + proc_err1 + "'." ;
                     log_error ("%s", message.c_str ());
                     std::string err =  TRANSLATE_ME ("Database software service is not running");
                     log_error_audit ("Request CREATE license FAILED");
@@ -189,6 +204,7 @@ bool database_ready;
                     log_error ("NOTE: Although start-db-services script was killed, the fty-db-engine service is okay");
                 }
             }
+
 
             {
                 fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-init"};
