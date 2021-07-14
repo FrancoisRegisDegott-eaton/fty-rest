@@ -218,7 +218,7 @@ bool database_ready;
 
                     if (!rv) {
                         logError(rv.error());
-                        log_error_audit("--! %s", message.c_str ());
+                        log_error_audit("--! %s", rv.error().c_str());
                         log_error_audit ("Request CREATE license FAILED");
                         http_die ("internal-error", TRANSLATE_ME ("Database schema was not installed or verified successfully").c_str());
                     }
