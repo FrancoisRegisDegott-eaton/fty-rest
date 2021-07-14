@@ -184,10 +184,10 @@ bool database_ready;
                     }
 
                     lastResult = *rv;
-                    if (*rv != 0) {
-                        sleep(5);
-                        continue;
+                    if (*rv == 0) {
+                        break;
                     }
+                    sleep(5);
                 }
 
                 if (lastResult != 0) {
@@ -207,17 +207,33 @@ bool database_ready;
 
 
             {
-                fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-init"};
-                // This should get our "systemctl" wrapper via PATH
                 std::string proc_out1, proc_err1;
+                int lastResult = 0;
 
-                auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
+                for (int i = 0; i < 10; ++i) {
+                    fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-init"};
+                    // This should get our "systemctl" wrapper via PATH
 
-                if (*rv != 0) {
+                    auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
+
+                    if (!rv) {
+                        logError(rv.error());
+                        log_error_audit ("Request CREATE license FAILED");
+                        http_die ("internal-error", TRANSLATE_ME ("Database schema was not installed or verified successfully").c_str());
+                    }
+
+                    lastResult = *rv;
+                    if (*rv == 0) {
+                        break;
+                    }
+                    sleep(5);
+                }
+
+                if (lastResult != 0) {
                     std::string message;
                     message = "`sudo systemctl list-ipm-units --active fty-db-init`"
                         " failed (service is not currently active). Return value = '"
-                        + std::to_string (rv) + "', stderr = '" + proc_err + "'." ;
+                        + std::to_string (lastResult) + "', stderr = '" + proc_err + "'." ;
                     log_error ("%s", message.c_str ());
                     std::string err =  TRANSLATE_ME ("Database schema was not installed or verified successfully");
                     log_error_audit ("Request CREATE license FAILED");
