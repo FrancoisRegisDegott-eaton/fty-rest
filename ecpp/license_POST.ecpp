@@ -210,7 +210,7 @@ bool database_ready;
                 std::string proc_out1, proc_err1;
                 int lastResult = 0;
 
-                for (int i = 0; i < 10; ++i) {
+                for (int i = 0; i < 30; ++i) {
                     fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-init"};
                     // This should get our "systemctl" wrapper via PATH
 
@@ -228,6 +228,7 @@ bool database_ready;
                         log_debug_audit("is ok");
                         break;
                     }
+                    log_debug_audit("next to check");
                     sleep(5);
                 }
 
