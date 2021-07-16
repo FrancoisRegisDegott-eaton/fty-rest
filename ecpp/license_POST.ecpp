@@ -225,10 +225,10 @@ bool database_ready;
 
                     lastResult = *rv;
                     if (*rv == 0) {
-                        log_debug_audit("is ok");
+                        log_error_audit("is ok");
                         break;
                     }
-                    log_debug_audit("next to check");
+                    log_error_audit("next to check");
                     sleep(5);
                 }
 
