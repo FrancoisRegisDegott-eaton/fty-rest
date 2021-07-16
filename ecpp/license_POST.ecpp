@@ -210,7 +210,8 @@ bool database_ready;
                 std::string proc_out1, proc_err1;
                 int lastResult = 0;
 
-                for (int i = 0; i < 30; ++i) {
+                // try to increase timeout..
+                for (int i = 0; i < 50; ++i) {
                     fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-init"};
                     // This should get our "systemctl" wrapper via PATH
 
