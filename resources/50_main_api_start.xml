@@ -22,6 +22,13 @@
         <url>^/api/v1/alerts/activelist(\?[^/]+)?$</url>
     </mapping>
 
+    <!-- alerts/assets-states-counter -->
+    <mapping>
+        <target>alert_assets_states_counter@libfty_rest</target>
+        <method>GET</method>
+        <url>^/api/v1/alerts/assets_states_counter(\?[^/]+)?$</url>
+    </mapping>
+
     <mapping>
         <target>admin_sse@libfty_rest</target>
         <method>GET</method>

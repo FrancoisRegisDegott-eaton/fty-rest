@@ -5,10 +5,18 @@
       <url>^/api/v1/assets($|/$)</url>
     </mapping>
 
-    <!-- Counters on asset-->
+    <!-- Counters on asset -->
+    <mapping>
+      <target>assets_in_counter@libfty_rest</target>
+      <url2>^/api/v1/asset-counters(\?[^\/]+)+$</url2>
+      <url>^/api/v1/asset-counters</url>
+      <method>GET</method>
+    </mapping>
+
+    <!-- Counters on active asset (legacy) -->
     <mapping>
       <target>asset_counter_GET@libfty_rest</target>
-      <url>^/api/v1/asset-counters($|\?.+$)</url>
+      <url>^/api/v1/asset-active-counters</url>
       <method>GET</method>
     </mapping>
 

@@ -1,0 +1,400 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ \file alert_assets_states_counter.ecpp
+ \author Eric Clappier <EricClappier@Eaton.com>
+ \brief Retrieve the number of asset in states Critical (at least 1 critical alert active) and
+  Warning (at least 1 warning alert active and no critrical)
+*/
+#><%pre>
+#include <exception>
+#include <string>
+#include <map>
+#include <functional>
+#include <malamute.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <tntdb/connection.h>
+#include <tntdb/error.h>
+#include <cxxtools/split.h>
+
+#include <fty_proto.h>
+#include "shared/utils.h"
+#include "shared/utilspp.h"
+#include "cleanup.h"
+#include "shared/utils_json.h"
+#include <fty_common_rest_helpers.h>
+#include <fty_common_db_dbpath.h>
+#include <fty_common_db_asset.h>
+#include <fty_common_mlm_utils.h>
+#include <fty_common_mlm_guards.h>
+#include <fty_common_macros.h>
+#include <fty_common_agents.h>
+#include <fty_common_asset_types.h>
+
+#define RFC_ALERTS_LIST "rfc-alerts-list"
+
+enum class Severity : std::int8_t { SEVERITY_WARNING = 1, SEVERITY_CRITICAL = 2 };
+
+</%pre>
+<%request scope="global">
+UserInfo user;
+bool database_ready;
+</%request>
+<%cpp>
+
+    // verify server is ready
+    if (!database_ready) {
+        log_debug ("Database is not ready yet.");
+        std::string err =  TRANSLATE_ME ("Database is not ready yet, please try again after a while.");
+        http_die ("internal-error", err.c_str ());
+    }
+
+    // check user permissions
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Dashboard, "R"},
+            {BiosProfile::Admin,     "R"}
+            };
+    CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
+
+    // sanity checks
+    std::string checked_in;
+    std::string checked_type;
+    std::vector<std::string> checked_subtypes;
+    uint32_t element_id = 0;
+    std::string url = DBConn::url;
+
+    {
+        std::string in = qparam.param("in");
+        std::string type = qparam.param("type");
+        std::string sub_type = qparam.param("sub_type");
+        log_debug ("Request parameters - Initial tainted values received:\n\tin = '%s'\n\ttype = '%s'\n\tsub_type = '%s'\n",
+            in.c_str (), type.c_str (), sub_type.c_str ());
+
+        if (!in.empty ())
+        {
+            if (!persist::is_ok_name (in.c_str()))
+            {
+                std::string msg1 = TRANSLATE_ME ("value '%s'", in.c_str ());
+                std::string msg2 = TRANSLATE_ME ("a valid asset");
+                http_die ("request-param-bad", "asset", msg1.c_str(), msg2.c_str());
+            }
+            checked_in = in;
+        }
+
+        if (!type.empty ()) {
+            // check type
+            if ( !persist::type_to_typeid (type) ) {
+                http_die ("request-param-bad", "type", "datacenter/room/row/rack/device");
+            }
+            checked_type = type;
+        }
+
+        if (!sub_type.empty ()) {
+            // we want to support multiple subtype selection
+            cxxtools::split(",", sub_type, std::back_inserter(checked_subtypes));
+            for ( const auto &subtype: checked_subtypes ) {
+                log_debug ("\tsubtype=%s", subtype.c_str ());
+                if ( !persist::subtype_to_subtypeid (subtype) ) {
+                    std::string expected =  TRANSLATE_ME ("See RFC-11 for possible values");
+                    http_die ("request-param-bad", "subtype", sub_type.c_str (), expected.c_str ());
+                }
+            }
+        }
+
+        log_debug ("Request parameters - un-tainted values applied:\n\tin = '%s'\n\ttype = '%s'\n\tsub_type = '%s'\n",
+            in.c_str (), type.c_str (), sub_type.c_str ());
+    }
+
+    {
+        int64_t dbid = DBAssets::name_to_asset_id (checked_in);
+        if (!checked_in.empty() && dbid == -1) {
+            http_die ("element-not-found", checked_in.c_str ());
+        }
+        if (dbid == -2) {
+            std::string err =  TRANSLATE_ME ("Connecting to database failed.");
+            http_die ("internal-error", err.c_str ());
+        }
+        element_id = (uint32_t) dbid;
+    }
+
+std::map<std::string, int> desired_elements;
+tntdb::Connection connection;
+try {
+    connection = tntdb::connect (url);
+}
+catch (const tntdb::Error& e) {
+    log_error ("tntdb::connect (url = '%s') failed: %s.", url.c_str (), e.what ());
+    std::string err =  TRANSLATE_ME ("Connecting to database failed.");
+    http_die ("internal-error", err.c_str ());
+}
+catch (const std::exception& e) {
+    log_error ("Exception caught: '%s'.", e.what ());
+    std::string err =  JSONIFY (e.what ());
+    http_die ("internal-error", err.c_str ());
+}
+
+if (!checked_in.empty ()) {
+    auto asset_element = DBAssets::select_asset_element_web_byId (connection, element_id);
+    if (asset_element.status != 1) {
+        http_die ("internal-error", asset_element.msg.c_str ());
+    }
+    log_debug ("Asset element name = '%s'.", asset_element.item.name.c_str ());
+    desired_elements.emplace (std::make_pair (asset_element.item.name, 5));
+
+    try {
+        int rv = DBAssets::select_assets_by_container (
+            connection,
+            element_id,
+            [&desired_elements](const tntdb::Row& row) -> void {
+                std::string name;
+                row[0].get (name);
+                desired_elements.emplace (std::make_pair (name, 5));
+            });
+        if (rv != 0) {
+            std::string err =  TRANSLATE_ME ("DBAssets::select_assets_by_container () failed.");
+            http_die ("internal-error", err.c_str ());
+        }
+    }
+    catch (const tntdb::Error& e) {
+        std::string err = JSONIFY (e.what ());
+        http_die ("internal-error", err.c_str ());
+    }
+    catch (const std::exception& e) {
+        std::string err =  JSONIFY (e.what ());
+        http_die ("internal-error", err.c_str ());
+    }
+
+}
+
+log_debug ("=== These elements are topologically under element id: '%" PRIu32"' ===", element_id);
+for (auto const& item : desired_elements) {
+    log_debug ("%s", item.first.c_str ());
+}
+log_debug ("=== end ===");
+
+// connect to malamute
+MlmClientGuard client(mlm_client_new ());
+if (!client) {
+    log_fatal ("mlm_client_new() failed.");
+    std::string err =  TRANSLATE_ME ("mlm_client_new() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+
+std::string client_name = utils::generate_mlm_client_id("web.alert_assets_states_counter");
+log_debug ("malamute client name = '%s'.", client_name.c_str ());
+
+int rv = mlm_client_connect (client, MLM_ENDPOINT, 1000, client_name.c_str ());
+if (rv == -1) {
+    log_fatal ("mlm_client_connect (endpoint = '%s', timeout = '%" PRIu32"', address = '%s') failed.",
+                    MLM_ENDPOINT, 1000, client_name.c_str ());
+    std::string err =  TRANSLATE_ME ("mlm_client_connect() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+
+// prepare rfc-alerts-list LIST message
+zmsg_t *send_msg = zmsg_new ();
+if (!send_msg) {
+    log_fatal ("zmsg_new() failed.");
+    std::string err =  TRANSLATE_ME ("zmsg_new() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+zmsg_addstr (send_msg, "LIST");
+zmsg_addstr (send_msg, "ALL-ACTIVE");
+
+// send it
+if (mlm_client_sendto (client, AGENT_FTY_ALERT_LIST, RFC_ALERTS_LIST, NULL, 1000, &send_msg) != 0) {
+    log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%" PRIu32"') failed.",
+        AGENT_FTY_ALERT_LIST, RFC_ALERTS_LIST, 1000);
+    zmsg_destroy (&send_msg);
+    std::string err =  TRANSLATE_ME ("mlm_client_sendto() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+
+// wait for the right message or time-out
+ZmsgGuard recv_msg;
+ZpollerGuard poller(zpoller_new (mlm_client_msgpipe (client), NULL));
+if (!poller) {
+    log_fatal ("zpoller_new() failed.");
+    std::string err =  TRANSLATE_ME ("zpoller_new() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+while (true) {
+    zsock_t *which = (zsock_t *) zpoller_wait (poller, 5000);
+    if (which) {
+        recv_msg = mlm_client_recv (client);
+    }
+    if (!recv_msg) {
+        if (zpoller_expired (poller) || zpoller_terminated (poller)) {
+            log_error ("zpoller_wait(timeout = 5000) timed out waiting for message.");
+            std::string err =  TRANSLATE_ME ("Timed out waiting for message.");
+            http_die ("internal-error", err.c_str ());
+        }
+        log_error ("mlm_client_recv() failed.");
+        std::string err =  TRANSLATE_ME ("mlm_client_recv() failed.");
+        http_die ("internal-error", err.c_str ());
+    }
+    if (streq (mlm_client_sender (client), AGENT_FTY_ALERT_LIST))
+        break;
+}
+
+// Got it
+// Check subject
+if (!streq (mlm_client_subject (client), RFC_ALERTS_LIST)) {
+    log_error ("Unexpected reply from '%s'. Subject expected = '%s', received = '%s'.",
+        mlm_client_sender (client), RFC_ALERTS_LIST, mlm_client_subject (client));
+    std::string err =  TRANSLATE_ME ("Bad message.");
+    http_die ("internal-error", err.c_str ());
+}
+log_debug (" subject ... OK.");
+log_debug (" number of frames = '%zu.", zmsg_size (recv_msg));
+// Check command. Can be LIST or ERROR
+ZstrGuard part (zmsg_popstr (recv_msg));
+if (streq (part, "LIST")) {
+    log_debug ("First frame == LIST ... OK");
+    part = zmsg_popstr (recv_msg);
+    if (!part || !streq (part, "ALL-ACTIVE")) {
+        log_error ("Unexpected reply from '%s'. Expected OK/state[/alert_1]...[/alert_N]. Got OK/(null).", mlm_client_sender (client));
+        std::string err =  TRANSLATE_ME ("Bad message.");
+        http_die ("internal-error", err.c_str ());
+    }
+    log_debug ("Second frame == '%s' ... OK", part.get());
+    zframe_t *frame = zmsg_pop (recv_msg);
+    if (!frame) {
+        log_debug ("First `zframe_t *frame = zmsg_pop (recv_msg)` returned NULL.");
+    }
+
+    std::map<std::string, enum Severity> device_states;
+
+    while (frame) {
+#if CZMQ_VERSION_MAJOR == 3
+        zmsg_t *decoded_zmsg = zmsg_decode (zframe_data (frame), zframe_size (frame));
+#else
+        zmsg_t *decoded_zmsg = zmsg_decode (frame);
+#endif
+        zframe_destroy (&frame);
+        if (!decoded_zmsg) {
+            log_error ("Bad frame, skipping");
+            frame = zmsg_pop (recv_msg);
+            continue;
+        }
+        fty_proto_t *decoded = fty_proto_decode (&decoded_zmsg);
+        if (!decoded) {
+            log_error ("Can't decode fty_proto");
+            frame = zmsg_pop (recv_msg);
+            continue;
+        }
+        if (fty_proto_id (decoded) != FTY_PROTO_ALERT) {
+            log_error ("message id is not FTY_PROTO_ALERT");
+            fty_proto_destroy (&decoded);
+            frame = zmsg_pop (recv_msg);
+            continue;
+        }
+        if ((!checked_in.empty () && desired_elements.find (fty_proto_name (decoded)) == desired_elements.end ())) {
+            log_debug ("skipping due to element_src '%s' not being in the list", fty_proto_name (decoded));
+            fty_proto_destroy (&decoded);
+            frame = zmsg_pop (recv_msg);
+            continue;
+        }
+
+        std::string alert_asset_id = fty_proto_name(decoded);
+        auto asset_element = DBAssets::select_asset_element_web_byName(connection, alert_asset_id.c_str());
+        if (asset_element.status != 1) {
+            log_error("%s", asset_element.msg.c_str());
+            frame = zmsg_pop (recv_msg);
+            continue;
+        }
+
+        std::string alert_asset_type = asset_element.item.type_name;
+        std::string alert_asset_sub_type = utils::strip(asset_element.item.subtype_name);
+        std::string alert_state = fty_proto_state(decoded);
+        std::string alert_severity = fty_proto_severity(decoded);
+        std::string alert_rule_name = fty_proto_rule(decoded);
+
+        // check alert type
+        if (!checked_type.empty() && alert_asset_type != checked_type) {
+            log_debug("filter alert %s with type %s", alert_rule_name.c_str(), alert_asset_type.c_str());
+            frame = zmsg_pop (recv_msg);
+            continue;
+        }
+
+        // check alert sub type
+        if (checked_subtypes.size() > 0 && std::find(checked_subtypes.begin(), checked_subtypes.end(), alert_asset_sub_type) == checked_subtypes.end()) {
+            log_debug("filter alert %s with sub type %s", alert_rule_name.c_str(), alert_asset_sub_type.c_str());
+            frame = zmsg_pop (recv_msg);
+            continue;
+        }
+
+        log_debug("compute alert %s (%s)", alert_rule_name.c_str(), alert_severity.c_str());
+
+        // if do not exist in the map add it
+        if (device_states.find(alert_asset_id) == device_states.end()) {
+            log_debug("compute alert %s - new %s", alert_rule_name.c_str(), alert_severity.c_str());
+            device_states[alert_asset_id] = (alert_severity == "CRITICAL") ? Severity::SEVERITY_CRITICAL : Severity::SEVERITY_WARNING;
+        }
+        else {
+            // if exist check if criticality need update
+            if (alert_severity == "CRITICAL") {
+                device_states[alert_asset_id] = Severity::SEVERITY_CRITICAL;
+            }
+            else if (alert_severity == "WARNING" && device_states[alert_asset_id] != Severity::SEVERITY_CRITICAL) {
+               device_states[alert_asset_id] = Severity::SEVERITY_WARNING;
+            }
+        }
+
+        fty_proto_destroy (&decoded);
+        frame = zmsg_pop (recv_msg);
+    }
+
+    // compute alert counters
+    int counterWarning = 0, counterCritical = 0;
+    for (auto it = device_states.begin(); it != device_states.end(); it++) {
+        if (it->second == Severity::SEVERITY_CRITICAL) counterCritical++;
+        else if (it->second == Severity::SEVERITY_WARNING) counterWarning++;
+    }
+    log_debug("compute alerts counters:\n\tcounterWarning=%d\n\tcounterCritical=%d", counterWarning, counterCritical);
+
+</%cpp>
+{
+    "Warning": <$ counterWarning $>,
+    "Critical": <$ counterCritical $>
+}
+<%cpp>
+    return HTTP_OK;
+}
+if (streq (part, "ERROR")) {
+    part = zmsg_popstr (recv_msg);
+    if (!part) {
+        log_error ("Unexpected reply from '%s'. Expected ERROR/reason. Got ERROR/(null).", mlm_client_sender (client));
+        std::string err =  TRANSLATE_ME ("Bad message.");
+        http_die ("internal-error", err.c_str ());
+    }
+
+    log_error ("%s", part.get());
+    std::string reason = part.get();
+    std::string err =  TRANSLATE_ME ("Error while requesting list of alerts: %s", reason.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+// Message does not conform to protocol
+log_error ("Unexptected reply from  '%s'. Does not conform to '%s' protocol.",
+    mlm_client_sender (client), RFC_ALERTS_LIST);
+std::string err =  TRANSLATE_ME ("Bad message.");
+http_die ("internal-error", err.c_str ());
+</%cpp>
