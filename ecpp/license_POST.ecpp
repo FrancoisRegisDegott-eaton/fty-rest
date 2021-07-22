@@ -138,8 +138,8 @@ bool database_ready;
         // long before this; so even if it failed - try to use the DB...
         fty::Process proc("/usr/libexec/fty/start-db-services", {}, fty::Capture::Out | fty::Capture::Err);
         if (auto ret = proc.run(); !ret) {
-            logError("Starting of start-db-services have failed. Consult system logs");
-            logError(ret.error());
+            log_error("Starting of start-db-services have failed. Consult system logs");
+            log_error(ret.error().c_str());
             http_die("internal-error", ret.error().c_str());
         }
         auto rv_svc = proc.wait(15000);
@@ -178,7 +178,7 @@ bool database_ready;
                     auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
 
                     if (!rv) {
-                        logError(rv.error());
+                        log_error(rv.error().c_str());
                         log_error_audit ("Request CREATE license FAILED");
                         http_die ("internal-error", TRANSLATE_ME ("Database software service is not running").c_str());
                     }
@@ -218,7 +218,7 @@ bool database_ready;
                     auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
 
                     if (!rv) {
-                        logError(rv.error());
+                        log_error(rv.error().c_str());
                         log_error_audit("--! %s", rv.error().c_str());
                         log_error_audit ("Request CREATE license FAILED");
                         http_die ("internal-error", TRANSLATE_ME ("Database schema was not installed or verified successfully").c_str());
