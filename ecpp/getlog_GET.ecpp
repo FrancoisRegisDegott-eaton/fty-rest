@@ -510,6 +510,7 @@ UserInfo user;
         { "www-audit",      bALL | bFCT, true,  "/var/log/tntnet/www-audit.log" },
         { "alarms-audit",   bALL | bFCT, true,  "/var/log/app-audit/alarms-audit.log" },
         { "metrics-audit",  bALL | bFCT, true,  "/var/log/app-audit/metrics-audit.log" },
+        { "email-audit",    bALL | bFCT, true,  "/var/log/app-audit/email-audit.log" },
         { "mass-mgr-audit", bALL | bFCT, true,  "/var/log/etn-mass-management/etn-mass-management.audit.log" },
         { "verify-fs",      bALL | bFCT, true,  "/var/log/verify-fs.log" },
         { "emc4j-audit",    bALL,        true,  "/var/log/etn-emc4j-ipm2/karaf.log" },
