@@ -52,7 +52,7 @@ int
 {
     int count = 0;
     auto func = [&count, &capabilities, &connection](const tntdb::Row& row) {
-        int asset_id = row.getValue("asset_id").getUnsigned32();
+        uint32_t asset_id = row.getValue("asset_id").getUnsigned32();
         // search capabilities if present in filter
         auto it_cap = std::find_if_not(capabilities.begin(), capabilities.end(),
             [&asset_id, &connection](const std::string& value)
