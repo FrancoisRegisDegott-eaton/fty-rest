@@ -18,83 +18,56 @@
  *
  */
 
-/*! \file   persist_error.h
-    \brief  Error handling class
-    \author Alena Chernikava <AlenaChernikava@Eaton.com>
-*/
-
-#ifndef SRC_PERSIST_PERSIST_ERROR_H
-#define SRC_PERSIST_PERSIST_ERROR_H
+/// @file   persist_error.h
+/// @brief  Error handling class
+/// @author Alena Chernikava <AlenaChernikava@Eaton.com>
+#pragma once
 
 #include <stdexcept>
 #include <string>
 
-namespace bios
+namespace bios {
+
+/// A base class for errors.
+class BiosErrorBase : public std::runtime_error
 {
-    /**
-     * \brief A base class for errors.
-     */
-    class BiosErrorBase : public std::runtime_error
-    {
-        public:
+public:
+    explicit BiosErrorBase(const std::string& msg);
+};
 
-        // Constructor
-        explicit BiosErrorBase(const std::string& msg);
-    };
+/// Exception thrown when specified element is not a device.
+class ElementIsNotDevice : public BiosErrorBase
+{
+public:
+    ElementIsNotDevice();
+};
 
-    /*
-     * \brief Exception thrown when specified element is not a device.
-     */
-    class ElementIsNotDevice : public BiosErrorBase
-    {
-        public:
-        // Constructor
-        ElementIsNotDevice();
-    };
+/// Exception thrown when for specified device monitor counterpart was not found.
+class MonitorCounterpartNotFound : public BiosErrorBase
+{
+public:
+    MonitorCounterpartNotFound();
+};
 
-    /*
-     * \brief Exception thrown when for specified device
-     *  monitor counterpart was not found.
-     */
-    class MonitorCounterpartNotFound : public BiosErrorBase
-    {
-        public:
-        // Constructor
-        MonitorCounterpartNotFound();
-    };
+/// Exception thrown when speified element was not found in database.
+class NotFound : public BiosErrorBase
+{
+public:
+    NotFound();
+};
 
-    /*
-     * \brief Exception thrown when speified element was not
-     * found in database.
-     */
-    class NotFound : public BiosErrorBase
-    {
-        public:
-        // Constructor
-        NotFound();
-    };
+/// Exception thrown when some unexcpected error in databaseoccured.
+class InternalDBError : public BiosErrorBase
+{
+public:
+    InternalDBError(const std::string& msg);
+};
 
-    /*
-     * \brief Exception thrown when some unexcpected error in database
-     * occured.
-     */
-    class InternalDBError : public BiosErrorBase
-    {
-        public:
-        // Constructor
-        InternalDBError(const std::string& msg);
-    };
+/// Exception thrown when bad input data found in database.
+class BadInput : public BiosErrorBase
+{
+public:
+    BadInput(const std::string& msg);
+};
 
-    /*
-     * \brief Exception thrown when bad input data found
-     * in database.
-     */
-    class BadInput : public BiosErrorBase
-    {
-        public:
-        // Constructor
-        BadInput(const std::string& msg);
-    };
-
-}
-#endif // SRC_PERSIST_PERSIST_ERROR_H
+} // namespace bios

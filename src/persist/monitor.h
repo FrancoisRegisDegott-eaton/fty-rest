@@ -18,23 +18,17 @@
  *
  */
 
-/*! \file   monitor.h
-    \brief  Functions for manipulating with elements in database monitor part.
-    \author Alena Chernikava <AlenaChernikava@Eaton.com>
-*/
+/// @file   monitor.h
+/// @brief  Functions for manipulating with elements in database monitor part.
+/// @author Alena Chernikava <AlenaChernikava@Eaton.com>
+#pragma once
 
-#ifndef SRC_PERSIST_MONITOR_H_
-#define SRC_PERSIST_MONITOR_H_
-
-#include <tntdb/connect.h>
-#include "dbhelpers.h"
+#include "db/dbhelpers.h"
 #include <fty_common_db.h>
+#include <tntdb/connect.h>
 
 // ===============================================================
 // DEVICE
 // ===============================================================
 
-db_reply_t
-    select_device (tntdb::Connection &conn,
-                   const char* device_name);
-#endif // SRC_PERSIST_MONITOR_H_
+db_reply_t select_device(tntdb::Connection& conn, const char* device_name);

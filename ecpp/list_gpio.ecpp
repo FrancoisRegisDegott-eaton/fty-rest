@@ -1,0 +1,196 @@
+<#
+ #
+ # Copyright (C) 2016 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ * \file    list_gpio.ecpp
+ * \author  Jana Rapava <JanaRapava@Eaton.com>
+ * \brief   This call provides detailed list of all supported GPIOs.
+ */
+ #><%pre>
+#include <string>
+#include <fty_common_macros.h>
+#include <fty_common_mlm_pool.h>
+#include <fty_common_rest_helpers.h>
+
+
+// list request
+static zmsg_t *
+req_list (zuuid_t *uuid)
+{
+    zmsg_t *msg = zmsg_new ();
+    zmsg_addstr (msg, zuuid_str_canonical (uuid));
+    return msg;
+}
+
+static int s_handle_response (zmsg_t *msg, std::string &json)
+{
+    json.assign ("[");
+    char *part_number = zmsg_popstr (msg);
+    while (part_number) {
+        json.append ("{");
+        json.append ("\"part_number\" : \"");
+        json.append (part_number);
+        json.append ("\", ");
+        zstr_free (&part_number);
+
+        char *manufacturer = zmsg_popstr (msg);
+        if (!manufacturer) return -5;
+        json.append ("\"manufacturer\" : \"");
+        json.append (manufacturer);
+        json.append ("\", ");
+        zstr_free (&manufacturer);
+
+        char *type = zmsg_popstr (msg);
+        if (!type) return -5;
+        json.append ("\"type\" : \"");
+        json.append (type);
+        json.append ("\", ");
+        zstr_free (&type);
+
+        char *normal_state = zmsg_popstr (msg);
+        if (!normal_state) return -5;
+        json.append ("\"normal_state\" : \"");
+        json.append (normal_state);
+        json.append ("\", ");
+        zstr_free (&normal_state);
+
+        char *gpx_direction = zmsg_popstr (msg);
+        if (!gpx_direction) return -5;
+        json.append ("\"gpx_direction\" : \"");
+        json.append (gpx_direction);
+        json.append ("\", ");
+        zstr_free (&gpx_direction);
+
+        char *gpx_power_source = zmsg_popstr (msg);
+        if (!gpx_power_source) return -5;
+        json.append ("\"gpx_power_source\" : \"");
+        json.append (gpx_power_source);
+        json.append ("\", ");
+        zstr_free (&gpx_power_source);
+
+        char *alarm_severity = zmsg_popstr (msg);
+        if (!alarm_severity) return -5;
+        json.append ("\"alarm_severity\" : \"");
+        json.append (alarm_severity);
+        json.append ("\", ");
+        zstr_free (&alarm_severity);
+
+        char *alarm_message = zmsg_popstr (msg);
+        if (!alarm_message) return -5;
+        json.append ("\"alarm_message\" : \"");
+        json.append (alarm_message);
+        json.append ("\" ");
+        zstr_free (&alarm_message);
+
+        json.append ("},");
+        part_number = zmsg_popstr (msg);
+    }
+    //remove trailing comma
+    json.pop_back ();
+    json.append ("]");
+    return 0;
+}
+
+int
+get_list (std::string &output)
+{
+    output.clear();
+
+    // connect to mlm client
+    auto client = mlm_pool.get();
+    if (!client)
+    {
+        log_fatal ("list_gpio: mlm_pool.get () failed.");
+        return -1;
+    }
+
+    zuuid_t *uuid = zuuid_new ();
+    zmsg_t *request = req_list (uuid);
+    int rv = client->sendto ("fty-sensor-gpio", "GPIO_MANIFEST", 1000, &request);
+
+    if (rv == -1)
+    {
+        zuuid_destroy (&uuid);
+        log_fatal ("list_gpio: client->sendto (address = '%s') failed.", "fty-sensor-gpio");
+        return -2;
+    }
+
+    zmsg_t *resp = client->recv (zuuid_str_canonical (uuid), 5);
+    zuuid_destroy (&uuid);
+    if (!resp)
+    {
+        log_fatal ("info: client->recv (timeout = '5') returned NULL");
+        return -3;
+    }
+    char *result = zmsg_popstr (resp);
+    if (result) {
+        if (streq (result, "OK")) {
+            int rv1 = s_handle_response (resp, output);
+            zstr_free (&result);
+            zmsg_destroy(&resp);
+            return rv1;
+        }
+        else {
+            zstr_free (&result);
+            zmsg_destroy(&resp);
+            return -5;
+        }
+    }
+    else {
+        zmsg_destroy(&resp);
+        return -5;
+    }
+}
+</%pre>
+<%request scope="global">
+UserInfo user;
+</%request>
+<%cpp>
+    // permission check
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Anonymous, "R"},
+            {BiosProfile::Dashboard, "R"},
+            {BiosProfile::Admin,     "R"}
+            };
+    CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
+
+    std::string output;
+    int rv = get_list (output);
+    if (rv == -1) {
+        std::string err =  TRANSLATE_ME ("mlmpool.get () failed.");
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -2) {
+        std::string err =  TRANSLATE_ME ("client->sendto () failed.");
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -3) {
+        std::string err =  TRANSLATE_ME ("client->recv () failed.");
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -5) {
+        std::string err =  TRANSLATE_ME ("fty-sensor-gpio returned malformed or unexpected message.");
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+</%cpp>
+<$$ output $>

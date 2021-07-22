@@ -1,0 +1,343 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ \file alert_rules_list.ecpp
+ \author Karol Hrdina <KarolHrdina@Eaton.com>
+ \brief  Returns a list of alert rules according specified parameters
+*/
+#><%pre>
+#include <cxxtools/jsonserializer.h>
+#include <cxxtools/serializationinfo.h>
+#include <cxxtools/jsondeserializer.h>
+#include <cxxtools/regex.h>
+#include <vector>
+#include <string>
+#include <regex>
+#include <malamute.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fty_common_db_dbpath.h>
+#include <fty_common_macros.h>
+#include <fty_common_rest.h>
+#include <fty_common_mlm_utils.h>
+#include <fty_common_mlm_guards.h>
+#include <fty_common_db_asset.h>
+
+</%pre>
+<%request scope="global">
+UserInfo user;
+bool database_ready;
+</%request>
+<%cpp>
+    // verify server is ready
+    if (!database_ready) {
+        log_debug ("Database is not ready yet.");
+        std::string err =  TRANSLATE_ME ("Database is not ready yet, please try again after a while.");
+        http_die ("internal-error", err.c_str ());
+    }
+
+    // check user permissions
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+        {BiosProfile::Dashboard, "R"},
+        {BiosProfile::Admin,     "R"}
+    };
+    CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
+
+    std::string checked_type;
+    std::string checked_rule_class;
+    {
+        std::string type = qparam.param("type");
+        std::string rule_class = qparam.param("rule_class");
+
+        // type
+        if (type.empty ()) {
+            type = "all";
+        }
+        if (type != "threshold" && type != "single" && type != "pattern" && type != "all" && type != "flexible") { // unknown parameter 'type'
+            std::string expected = TRANSLATE_ME ("one of the following values ['threshold', 'single', 'pattern', 'all', 'flexible']");
+            http_die ("request-param-bad", "type", std::string ("'").append (type).append ("'").c_str (),
+                          expected.c_str ());
+        }
+        checked_type = type;
+
+        // rule_class
+        http_errors_t errors;
+        if (check_regex_text ("rule_class", rule_class, "^.{0,100}$", errors)) {
+            checked_rule_class = rule_class;
+        } else {
+            http_die_error (errors);
+        }
+    }
+
+// connect to malamute
+MlmClientGuard client(mlm_client_new ());
+if (!client.get()) {
+    log_fatal ("mlm_client_new() failed.");
+    std::string err =  TRANSLATE_ME ("mlm_client_new() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+
+std::string client_name = utils::generate_mlm_client_id("web.alert_rules_list");
+log_debug ("malamute client name = '%s'.", client_name.c_str ());
+
+int rv = mlm_client_connect (client, MLM_ENDPOINT, 1000, client_name.c_str ());
+if (rv == -1) {
+    log_fatal ("mlm_client_connect (endpoint = '%s', timeout = '%d', address = '%s') failed.",
+                    MLM_ENDPOINT, 1000, client_name.c_str ());
+    std::string err =  TRANSLATE_ME ("mlm_client_connect() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+
+// prepare rfc-evaluator-rules LIST message
+zmsg_t *send_msg = zmsg_new ();
+if (!send_msg) {
+    log_fatal ("zmsg_new() failed.");
+    std::string err =  TRANSLATE_ME ("zmsg_new() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+zmsg_addstr (send_msg, "LIST");
+zmsg_addstr (send_msg, checked_type.c_str ());
+zmsg_addstr (send_msg, checked_rule_class.c_str ());
+
+const char *dest = "fty-alert-engine";
+if (checked_type == "flexible") dest = "fty-alert-flexible";
+
+// send it
+  if (mlm_client_sendto (client, dest, "rfc-evaluator-rules", NULL, 1000, &send_msg) != 0) {
+    log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
+        dest, "rfc-evaluator-rules", 1000);
+    zmsg_destroy (&send_msg);
+    std::string err =  TRANSLATE_ME ("mlm_client_sendto() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+
+ZmsgGuard recv_msg;
+zsock_t *pipe = mlm_client_msgpipe (client);
+if (!pipe) {
+    log_fatal ("mlm_client_msgpipe() failed.");
+    std::string err =  TRANSLATE_ME ("mlm_client_msgpipe() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+ZpollerGuard poller(zpoller_new (pipe, NULL));
+if (!poller) {
+    log_fatal ("zpoller_new() failed.");
+    std::string err =  TRANSLATE_ME ("zpoller_new() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+while (true) {
+    zsock_t *which = static_cast<zsock_t*>(zpoller_wait(poller, 5000));
+    if (which) {
+        recv_msg = mlm_client_recv (client);
+    }
+    if (!recv_msg) {
+        if (zpoller_expired (poller)) {
+            log_error ("zpoller_wait(timeout = 5000) timed out waiting for message.");
+            std::string err =  TRANSLATE_ME ("Timed out waiting for message.");
+            http_die ("internal-error", err.c_str ());
+        }
+        log_error ("mlm_client_recv() failed.");
+        std::string err =  TRANSLATE_ME ("mlm_client_recv() failed.");
+        http_die ("internal-error", err.c_str ());
+    }
+    if (streq (mlm_client_sender (client), dest))
+        break;
+}
+// Got it
+// Check subject
+if (!streq (mlm_client_subject (client), "rfc-evaluator-rules")) {
+    log_error ("Unexpected reply from '%s'. Subject expected = '%s', received = '%s'.",
+        mlm_client_sender (client), "rfc-evaluator-rules", mlm_client_subject (client));
+    std::string err =  TRANSLATE_ME ("Bad message.");
+    http_die ("internal-error", err.c_str ());
+}
+
+// Check command. Can be LIST or ERROR
+ZstrGuard part (zmsg_popstr (recv_msg));
+if (streq (part, "LIST")) {
+    part = zmsg_popstr (recv_msg);
+    // type received must be equal to type requested
+    if (checked_type.compare (part) != 0) {
+        log_error ("Unexpected reply from '%s'. Type expected = '%s', received = '%s' . Protocol: rfc-evaluator-rules; message: 1) LIST.",
+            mlm_client_sender (client), checked_type.c_str (), part.get());
+        std::string err =  TRANSLATE_ME ("Received type != expected one!");
+        http_die ("internal-error", err.c_str ());
+    }
+    part = zmsg_popstr (recv_msg);
+    // class received must be equal to type requested
+    if (checked_rule_class.compare (part) != 0) {
+        log_error ("Unexpected reply from '%s'. rule_class expected = '%s', received = '%s' . Protocol: rfc-evaluator-rules; message: 1) LIST.",
+            mlm_client_sender (client), checked_rule_class.c_str (), part.get());
+        std::string err =  TRANSLATE_ME ("Received rule_class != expected one!");
+        http_die ("internal-error", err.c_str ());
+    }
+    part = zmsg_popstr (recv_msg);
+    
+    cxxtools::SerializationInfo si;
+    si.setCategory(cxxtools::SerializationInfo::Category::Array);
+
+    //variables for assetLink and ename
+    std::string assetLink = "";
+    std::string externalName = "";
+
+    log_debug ("Collecting the data:");
+
+    while (part) {
+        
+        const char *internalCat = "\"CAT_INTERNAL\"";
+        const char *automationCat = "\"CAT_AUTOMATION\"";
+
+        //we need to serialize the section
+        if ((strstr(part, internalCat) == nullptr) && (strstr(part, automationCat) == nullptr)) {
+
+            std::string data(part.get());
+            //log_debug ("Part: %s \n\n", data.c_str());
+
+            //recover the ename JSON => \"ename\" : { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
+            // Be careful: the ename section is a JSON inside an JSON attribut.
+
+            std::size_t found = data.find("\\\"ename\\\"");
+
+            if(found!=std::string::npos){
+
+                try
+                {
+                    //we have an ename section. Extract { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
+                    std::size_t start = data.find("{", found);
+                    std::size_t end = data.find("}", found);
+
+                    std::string currentEname = data.substr(start,  (end - start +1));
+
+                    log_debug("Current ename: %s", currentEname.c_str());
+
+                    //get a proper json { "value" : "test", "assetLink" : "datacenter-3"}
+                    std::string enameData = std::regex_replace (currentEname ,std::regex("\\\\\""), "\"");
+
+                    log_debug("Current in JSON format: %s", enameData.c_str());
+
+                    //unserialize the section
+                    cxxtools::SerializationInfo siEname;
+
+                    std::stringstream input(enameData);
+
+                    cxxtools::JsonDeserializer deserializer(input);
+                    deserializer.deserialize(siEname);
+
+                    const cxxtools::SerializationInfo & siAssetLink = siEname.getMember("assetLink");
+
+                    //recover assetLink
+                    std::string tmpAssetLink;
+                    siAssetLink.getValue(tmpAssetLink);
+
+                    log_debug("Current assetLink: %s", tmpAssetLink.c_str());
+
+                    //recover the data of the asset if needed
+                    if(tmpAssetLink != assetLink)
+                    {
+                        DBAssets::name_to_extname(tmpAssetLink, externalName);
+                        assetLink = tmpAssetLink;
+                    }
+
+                    //create it manualy to match the good format { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
+                    std::string newEname = "{ \\\"value\\\" : \\\""+externalName+"\\\", \\\"assetLink\\\" : \\\""+assetLink+"\\\"}";
+
+                    log_debug("New ename: %s", newEname.c_str());
+
+                    //Replace the ename section by the correct one in the file
+                    //make a copy first
+
+                    std::string newData = data;
+
+                    size_t index = 0;
+                    while (true)
+                    {
+                        //Locate the section to replace.
+                        index = newData.find(currentEname, index);
+
+                        //end of string
+                        if (index == std::string::npos) break;
+
+                        // Make the replacement.
+                        newData.replace(index, currentEname.size(), newEname);
+
+                        //Advance index forward so the next iteration doesn't pick it up as well.
+                        index += newEname.size();
+                    }
+
+                    log_debug("Ename has been replaced.");
+
+                    //ensure we are able to unserialize newData
+                    cxxtools::SerializationInfo siTmp;
+                    std::stringstream inputTmp(newData);
+                    cxxtools::JsonDeserializer deserializerTmp(inputTmp);
+                    deserializerTmp.deserialize(siTmp);
+
+                    data = newData;
+
+                }
+                catch(const std::exception& e)
+                {
+                    //ignore the change and continue
+                    log_error ("Error during replacement of ename: %s", e.what());
+                }  
+            }
+
+            //deserialize the new data to add it in the answer json
+            cxxtools::SerializationInfo & siRule = si.addMember("");
+
+            std::stringstream input(data);
+            cxxtools::JsonDeserializer deserializer(input);
+            deserializer.deserialize(siRule);
+        }
+
+        part = zmsg_popstr (recv_msg);
+    }
+
+    cxxtools::JsonSerializer serializer(reply.out());
+    serializer.beautify (true);
+    serializer.serialize(si).finish();
+
+    return HTTP_OK;
+}
+
+if (streq (part, "ERROR")) {
+    part = zmsg_popstr (recv_msg);
+    if (!part) {
+        log_error ("Unexpected reply from '%s'. Expected ERROR/reason. Got ERROR/(null).", mlm_client_sender (client));
+        std::string err =  TRANSLATE_ME ("Bad message.");
+        http_die ("internal-error", err.c_str ());
+    }
+    if (streq (part, "NOT_FOUND")) {
+        log_error ("Rule type '%s' does not exist.", checked_type.c_str ());
+        std::string expected = TRANSLATE_ME ("one of the following values [ 'threshold', 'single', 'pattern', 'all' ] or empty");
+        http_die ("request-param-bad", "type", std::string ("'").append (checked_type).append ("'").c_str (),
+                  expected.c_str ());
+    }
+    log_error ("%s", part.get());
+    std::string reason = part.get();
+    std::string err =  TRANSLATE_ME ("Error while retrieving list of rules with type = '%s': %s.", checked_type.c_str (), reason.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+
+// Message does not conform to protocol
+log_error ("Unexptected reply from  '%s'. Does not conform to rfc-evaluator-rules.",
+    mlm_client_sender (client));
+std::string err =  TRANSLATE_ME ("Bad message.");
+http_die ("internal-error", err.c_str ());
+</%cpp>

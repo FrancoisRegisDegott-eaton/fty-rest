@@ -1,0 +1,146 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ * \file    hw_capability.ecpp
+ * \author  Jana Rapava <JanaRapava@Eaton.com>
+ * \brief   This call provides info about GPIO pins.
+ */
+ #><%pre>
+#include <string>
+#include <fty_common_mlm_pool.h>
+#include <fty_common_rest_helpers.h>
+#include <fty_common_macros.h>
+
+// info request
+static zmsg_t *
+req_hw_cap (zuuid_t *uuid, const char *type)
+{
+    zmsg_t *msg = zmsg_new ();
+    zmsg_addstr (msg, "HW_CAP");
+    zmsg_addstr (msg, zuuid_str_canonical (uuid));
+    zmsg_addstr (msg, type);
+    return msg;
+}
+
+void
+build_json (std::string &output, const std::string &hw_type,
+		const std::string &gpi_count, const std::string &gpo_count)
+{
+    output.clear();
+    output = "{\n";
+    output += utils::json::jsonify("type", hw_type) + ",\n";
+    output += utils::json::jsonify("gpi", gpi_count) + ",\n";
+    output += utils::json::jsonify("gpo", gpo_count) + "\n";
+    output += "}";
+}
+
+// get a given HW capability from fty-info
+int
+get_hw_capability (const char *type, std::string &res, std::string& errstr)
+{
+    // connect to mlm client
+    auto client = mlm_pool.get();
+    if (!client)
+    {
+        errstr = TRANSLATE_ME ("mlm_pool.get () failed.");
+        log_fatal ("hw_capability: mlm_pool.get () failed.");
+        return -1;
+    }
+
+    zuuid_t *uuid = zuuid_new ();
+    zmsg_t *send = req_hw_cap (uuid, type);
+    if (client->sendto ("fty-info", "hwcapabaility", 1000, &send) < 0)
+    {
+        errstr = TRANSLATE_ME ("client->sendto () failed.");
+        log_fatal ("hw_capability: client->sendto (address = '%s') failed.", "fty-info");
+        zmsg_destroy (&send);
+        zuuid_destroy (&uuid);
+        return -1;
+    }
+
+    zmsg_t *resp = client->recv (zuuid_str_canonical (uuid), 5);
+    zuuid_destroy (&uuid);
+    if (!resp)
+    {
+        errstr = TRANSLATE_ME ("client->recv () failed.");
+        log_fatal ("hw_capability: client->recv (timeout = '5') returned NULL");
+        zmsg_destroy (&resp);
+        return -1;
+    }
+    char *result = zmsg_popstr (resp);
+    if (streq (result, "OK")) {
+        zstr_free (&result);
+        char *resp_type = zmsg_popstr (resp);
+        if (streq(resp_type, type)) {
+            zstr_free (&resp_type);
+            char *popstr = zmsg_popstr (resp);
+            res = popstr;
+            zstr_free(&popstr);
+            zmsg_destroy (&resp);
+        }
+        else {
+            zstr_free (&resp_type);
+            zmsg_destroy (&resp);
+            errstr = TRANSLATE_ME ("unexpected response from fty-info.");
+            log_fatal ("hw_capability: unexpected response from fty-info");
+            return -1;
+        }
+    }
+    else {
+        zstr_free (&result);
+        zmsg_destroy (&resp);
+        errstr = TRANSLATE_ME ("ERROR response from fty-info.");
+        log_fatal ("hw_capability: ERROR response from fty-info.");
+        return -1;
+    }
+    return 0;
+}
+</%pre>
+<%request scope="global">
+UserInfo user;
+</%request>
+<%cpp>
+    // permission check
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Anonymous, "R"},
+            {BiosProfile::Dashboard, "R"},
+            {BiosProfile::Admin,     "R"}
+            };
+    CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
+
+    std::string id = request.getArg("id");
+    if (id.empty())
+        http_die("request-param-required", "id");
+    if (id != "rackcontroller-0") {
+        std::string reason = TRANSLATE_ME ("not supported");
+        http_die ("request-param-bad", "id", id.c_str (), reason.c_str ());
+    }
+
+    std::string output, hw_type, gpi_count, gpo_count;
+    std::string errstr = TRANSLATE_ME ("unspecified error");
+    if (get_hw_capability ("type", hw_type, errstr) < 0)
+        http_die ("internal-error", errstr.c_str ());
+    if (get_hw_capability ("gpi", gpi_count, errstr) < 0)
+        http_die ("internal-error", errstr.c_str ());
+    if (get_hw_capability ("gpo", gpo_count, errstr) < 0)
+        http_die ("internal-error", errstr.c_str ());
+    build_json (output, hw_type, gpi_count, gpo_count);
+</%cpp>
+<$$ output $>

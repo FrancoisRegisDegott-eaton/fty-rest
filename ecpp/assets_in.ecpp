@@ -1,0 +1,246 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ * \file assets_in.ecpp
+ * \author Tomas Halman <TomasHalman@Eaton.com>
+ * \brief  Implementation for short list of assets in container
+ */
+ #><%pre>
+#include <vector>
+#include <string>
+#include <exception>
+#include <tntdb/connect.h>
+#include <tntdb/error.h>
+#include <cxxtools/jsonserializer.h>
+#include <cxxtools/serializationinfo.h>
+#include <cxxtools/split.h>
+#include <fty_common_rest_helpers.h>
+#include <fty_common_db_dbpath.h>
+#include <fty_common_db_asset.h>
+#include <fty_common_macros.h>
+#include "shared/utilspp.h"
+#include "db/inout.h"
+
+class Asset {
+public:
+    Asset(const std::string &i, const std::string &n,
+          const std::string &t, const std::string &s)
+        : id(i), name(n), type(t), sub_type(s)
+    {}
+    std::string getId() const { return id; }
+private:
+    std::string id, name, type, sub_type;
+    friend void operator<<=(cxxtools::SerializationInfo &si, const Asset &asset);
+};
+
+typedef std::vector<Asset> Assets;
+
+void operator<<=(cxxtools::SerializationInfo &si, const Asset &asset)
+{
+    si.addMember("id")       <<= asset.id;
+    si.addMember("name")     <<= asset.name;
+    si.addMember("type")     <<= asset.type;
+    si.addMember("sub_type") <<= asset.sub_type;
+}
+
+Assets
+    assets_in_container(
+        tntdb::Connection &connection,
+        a_elmnt_id_t container,
+        const std::vector<a_elmnt_tp_id_t> &types,
+        const std::vector<a_elmnt_stp_id_t> &subtypes,
+        const std::vector<std::string> &capabilities,
+        const std::string &without,
+        const std::string &status,
+        const std::string &configured
+    )
+{
+    Assets result;
+    auto func = [&result, &capabilities, &connection](const tntdb::Row& row) {
+        uint32_t asset_id = row.getValue("asset_id").getUnsigned32();
+        // search capabilities if present in filter
+        auto it_cap = std::find_if_not(capabilities.begin(), capabilities.end(),
+            [&asset_id, &connection](const std::string& value)
+            {
+                std::string capability = std::string("capability.") + value;
+                return DBAssets::has_asset_keytag_value(connection, capability, "yes", asset_id) > 0;
+            }
+        );
+        // add element if no capabilities present or if capabilites present and all of them not found
+        if (capabilities.size() == 0 || it_cap == capabilities.end())
+        {
+            result.emplace_back(
+                row.getValue("name").getString(),
+                DBAssets::id_to_name_ext_name (row.getValue("asset_id").getUnsigned32()).second,
+                persist::typeid_to_type(uint16_t(row.getValue("type_id").getInt())),
+                utils::strip(persist::subtypeid_to_subtype(uint16_t(row.getValue("subtype_id").getInt())))
+            );
+        }
+    };
+    int rv;
+    if (container)
+        rv = DBAssets::select_assets_by_container(connection, container, types, subtypes, without, status, configured, func);
+    else
+        rv = DBAssets::select_assets_all_container(connection, types, subtypes, without, status, configured, func);
+
+    if (rv != 0)
+        throw std::runtime_error("Database failure");
+    return result;
+}
+
+</%pre>
+<%request scope="global">
+UserInfo user;
+bool database_ready;
+</%request>
+<%cpp>
+    // verify server is ready
+    if (!database_ready) {
+        log_debug ("Database is not ready yet.");
+        std::string err =  TRANSLATE_ME ("Database is not ready yet, please try again after a while.");
+        http_die ("internal-error", err.c_str ());
+    }
+
+    // check user permissions
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Dashboard, "R"},
+            {BiosProfile::Admin,     "R"}
+            };
+    CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
+
+    // check if method is allowed
+    if ( !request.isMethodGET() ) {
+        http_die ("method-not-allowed", request.getMethod().c_str());
+    }
+
+    // checked parameters
+    std::vector<a_elmnt_stp_id_t> checked_subtypes;
+    std::vector<a_elmnt_tp_id_t> checked_types;
+    std::vector<std::string> checked_capabilities;
+    a_elmnt_id_t checked_id = 0;
+    std::string without = "";
+    std::string status = "";
+    std::string details = "";
+    std::string configured = "";
+    std::vector<std::string> checked_configured = { "all", "no", "yes" };
+    bool in_parameter_present = true;
+
+    // ##################################################
+    // BLOCK 1
+    // Sanity parameter check
+    {
+        // dirty parameters
+        // Arguments parsed from URL: -> request.getArg("agrgumentName")
+        // Real parameters  in URL (after '?': -> qparam.param("parameterName")
+        std::string in = qparam.param("in");
+        std::string type = qparam.param("type");
+        std::string sub_type = qparam.param("sub_type");
+        std::string capability = qparam.param("capability");
+        without = qparam.param("without");
+        status = qparam.param("status");
+        details = qparam.param("details");
+        configured = qparam.param("configured");
+
+        // check if mandatory parameters are present
+        if ( in.empty() ) {
+            in_parameter_present = false;
+        }
+
+        // checked subtypes/types
+        if( ! sub_type.empty() ) {
+            std::vector<std::string> items;
+            cxxtools::split(',', sub_type, std::back_inserter(items));
+            for( const auto &it : items ) {
+                a_elmnt_stp_id_t sub_type_id = persist::subtype_to_subtypeid(it);
+                if ( sub_type_id == persist::asset_subtype::SUNKNOWN ) {
+                    std::string expected = TRANSLATE_ME ("valid sub_type like feed, ups, etc...");
+                    http_die ("request-param-bad", "sub_type", it.c_str(), expected.c_str ());
+                }
+                checked_subtypes.push_back(sub_type_id);
+            }
+        }
+        if ( !type.empty() ) {
+            std::vector<std::string> items;
+            cxxtools::split(',', type, std::back_inserter(items));
+            for( const auto &it : items ) {
+                a_elmnt_stp_id_t type_id = persist::type_to_typeid(it);
+                if ( type_id == persist::asset_type::TUNKNOWN ) {
+                    std::string expected = TRANSLATE_ME ("valid type like datacenter, room, etc...");
+                    http_die ("request-param-bad", "type", it.c_str(), expected.c_str ());
+                }
+                checked_types.push_back(type_id);
+            }
+        }
+        // checked capability
+        if( !capability.empty() ) {
+            cxxtools::split(',', capability, std::back_inserter(checked_capabilities));
+        }
+        // convert the id from string to number
+        http_errors_t errors;
+        if (in_parameter_present &&  !check_element_identifier ("in", in, checked_id, errors) ) {
+            http_die_error (errors);
+        }
+
+        // check configured
+        // note: the value "all" deactivate the option
+        if (!configured.empty() && std::find(checked_configured.begin(), checked_configured.end(), configured) == checked_configured.end()) {
+            std::string expected = TRANSLATE_ME ("valid configured is all, no or yes");
+            http_die ("request-param-bad", "configured", configured.c_str(), expected.c_str());
+        }
+    }
+
+    // create a database connection
+    tntdb::Connection connection;
+    try {
+        connection = tntdb::connect (DBConn::url);
+    }
+    catch (const tntdb::Error& e) {
+        log_error ("tntdb::connect (url = '%s') failed: %s.", DBConn::url.c_str (), e.what ());
+        std::string err =  TRANSLATE_ME ("Connecting to database failed.");
+        http_die ("internal-error", err.c_str ());
+    }
+    catch (const std::exception& e) {
+        log_error ("Exception caught: '%s'.", e.what ());
+        std::string err = JSONIFY (e.what ());
+        http_die ("internal-error", err.c_str ());
+    }
+    // do the stuff
+    Assets assets;
+    try {
+        assets = assets_in_container(connection, checked_id, checked_types, checked_subtypes, checked_capabilities, without, status, configured);
+    } catch (std::exception &e) {
+        std::string err = JSONIFY (e.what());
+        http_die ("internal-error", err.c_str ());
+    }
+
+    if (!details.empty() && details == "true") {
+      std::set<std::string> listElements;
+      for(auto const& asset: assets) {
+        listElements.insert(asset.getId());
+      }
+      persist::export_asset_json (reply.out (), &listElements);
+    } else {
+      cxxtools::JsonSerializer serializer(reply.out ());
+      serializer.beautify(true);
+      serializer.serialize(assets).finish();
+    }
+
+    return HTTP_OK;
+</%cpp>

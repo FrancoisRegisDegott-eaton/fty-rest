@@ -35,9 +35,9 @@
 #include <fty_common.h>
 #include <fty_common_macros.h>
 
-#include "assetcrud.h"
-#include "monitor.h"
-#include "persist_error.h"
+#include "persist/assetcrud.h"
+#include "persist/monitor.h"
+#include "persist/persist_error.h"
 #include "cleanup.h"
 
 zlist_t* select_asset_device_links_all(tntdb::Connection &conn,
@@ -256,7 +256,7 @@ db_reply <db_a_elmnt_t>
         tntdb::Statement st;
         tntdb::Row row;
         try {
-            tntdb::Statement st = conn.prepare(
+            tntdb::Statement st1 = conn.prepare(
                 " SELECT"
                 "   v.name, v.id_parent, v.status, v.priority, v.id, v.id_type"
                 " FROM"
@@ -264,11 +264,11 @@ db_reply <db_a_elmnt_t>
                 " WHERE v.name = :name"
             );
 
-            row = st.set("name", element_name).selectRow();
+            row = st1.set("name", element_name).selectRow();
         }
         catch (const tntdb::NotFound &e) {
             // maybe we got extname instead of name
-            tntdb::Statement st = conn.prepare(
+            tntdb::Statement st1 = conn.prepare(
                 " SELECT v.name, v.id_parent, v.status, v.priority, v.id, v.id_type "
                 " FROM "
                 "   v_bios_asset_element AS v "
@@ -280,7 +280,7 @@ db_reply <db_a_elmnt_t>
                 "   ext.keytag = 'name' AND ext.value = :name "
             );
 
-            row = st.set("name", element_name).selectRow();
+            row = st1.set("name", element_name).selectRow();
         }
 
         row[0].get(ret.item.name);

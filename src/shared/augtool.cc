@@ -26,10 +26,11 @@
 #include <vector>
 #include <string>
 #include <functional>
-#include <cxxtools/split.h>
+#include <fty/string-utils.h>
 #include <mutex>
 #include <thread>
 #include <chrono>
+#include <fty_log.h>
 
 #include "shared/augtool.h"
 
@@ -39,10 +40,9 @@ std::string augtool::get_cmd_out(std::string cmd, bool key_value,
                                  std::string sep,
                                  std::function<bool(std::string)> filter) {
     std::string in = get_cmd_out_raw(cmd);
-    std::vector<std::string> spl;
+    std::vector<std::string> spl = fty::split(in, "\n");
     bool not_first = false;
     std::string out;
-    cxxtools::split("\n", in, std::back_inserter(spl));
     if(spl.size() >= 3) {
         spl.erase(spl.begin());
         spl.pop_back();
@@ -80,9 +80,9 @@ std::string augtool::get_cmd_out_raw(std::string command) {
 
     if(command.empty() || command.back() != '\n')
         command += "\n";
-    if(::write(prc->getStdin(), command.c_str(), command.length()) < 1)
+    if(!prc->write(command))
         err = true;
-    ret = MlmSubprocess::wait_read_all(prc->getStdout());
+    ret = prc->readAllStandardOutput(500);
     return err ? "" : ret;
 }
 
@@ -90,39 +90,58 @@ void augtool::run_cmd(std::string cmd) {
     get_cmd_out_raw(cmd);
 }
 
+static std::mutex clear_mux;
+
 void augtool::clear() {
-    static std::mutex clear_mux;
     std::lock_guard<std::mutex> lock(clear_mux);
     run_cmd("");
     run_cmd("load");
 }
 
+static std::mutex in_mux;
+
 augtool* augtool::get_instance() {
     static augtool inst;
-    static std::mutex in_mux;
-    std::string nil;
+    /*std::string nil;
 
     // Initialization of augtool subprocess if needed
     std::lock_guard<std::mutex> lock(in_mux);
 
     if(inst.prc == NULL) {
-        MlmSubprocess::Argv exe = { "sudo", "augtool", "-S", "-I/usr/share/fty/lenses", "-e" };
-        inst.prc = new MlmSubprocess::SubProcess(exe,
-                                                 MlmSubprocess::SubProcess::STDOUT_PIPE |
-                                                 MlmSubprocess::SubProcess::STDIN_PIPE);
-
-        //sleep to ensure augeas is launched
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        logDebug("new Process");
+        inst.prc = new fty::Process("sudo", {"augtool", "-S", "-I/usr/share/fty/lenses", "-e"});
     }
-    if(!inst.prc->isRunning()) {
-        inst.prc->run();
-        nil = inst.get_cmd_out_raw("help");
-        if(!inst.prc->isRunning() || nil.find("match") == nil.npos) {
-            delete inst.prc;
-            inst.prc = NULL;
-            return NULL;
+    if(!inst.prc->exists()) {
+        logDebug("Proc not exits");
+        if (inst.prc->run()) {
+            logDebug("run process");
+            nil = inst.get_cmd_out_raw("help");
+            if(nil.find("match") == nil.npos) {
+                delete inst.prc;
+                inst.prc = NULL;
+                return NULL;
+            }
         }
     }
-    inst.clear();
+    inst.clear();*/
     return &inst;
+}
+
+augtool::augtool()
+{
+    logDebug("new Process");
+    prc = new fty::Process("sudo", {"augtool", "-S", "-I/usr/share/fty/lenses", "-e"});
+
+    if(!prc->exists()) {
+        logDebug("Proc not exits");
+        if (prc->run()) {
+            logDebug("run process");
+            std::string nil = get_cmd_out_raw("help");
+            if(nil.find("match") == nil.npos) {
+                delete prc;
+                prc = NULL;
+            }
+        }
+    }
+    clear();
 }

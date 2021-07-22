@@ -24,33 +24,31 @@
     \author Alena Chernikava <AlenaChernikava@Eaton.com>
 */
 
-#include <string>
-#include <algorithm>
-#include <ctype.h>
-#include <unordered_set>
-#include <limits>
-#include <cstddef>
-
-#include <tntdb/connect.h>
-#include <cxxtools/regex.h>
-#include <cxxtools/join.h>
-
-#include <fty_proto.h>
-#include <fty_common_rest.h>
-#include <fty_common_db_dbpath.h>
-#include <fty_common_db.h>
-#include <fty_common_mlm_tntmlm.h>
-#include <fty_common_mlm_sync_client.h>
-#include <fty_asset_activator.h>
-
-#include "../../persist/assetcrud.h"
 #include "cleanup.h"
-#include "../asset_general.h"
+#include "db/asset_general.h"
 #include "db/dbhelpers.h"
-#include "../inout.h"
+#include "db/inout.h"
+#include "persist/assetcrud.h"
 #include "shared/utils.h"
 #include "shared/utils_json.h"
 #include "shared/utilspp.h"
+#include <algorithm>
+#include <cstddef>
+#include <ctype.h>
+#include <fty/string-utils.h>
+#include <fty_asset_activator.h>
+#include <fty_common_db.h>
+#include <fty_common_db_dbpath.h>
+#include <fty_common_mlm_pool.h>
+#include <fty_common_mlm_sync_client.h>
+#include <fty_common_rest.h>
+#include <fty_proto.h>
+#include <limits>
+#include <regex>
+#include <string>
+#include <tntdb/connect.h>
+#include <unordered_set>
+
 
 #define AGENT_ASSET_ACTIVATOR "etn-licensing-credits"
 
@@ -64,13 +62,12 @@ typedef struct _LIMITATIONS_STRUCT
     int global_configurability;
 } LIMITATIONS_STRUCT;
 
-int
-    get_priority
-        (const std::string& s)
+int get_priority(const std::string& s)
 {
-    if ( s.size() > 2 )
+    if (s.size() > 2)
         return 5;
-    for (int i = 0; i != 2; i++) {
+
+    for (size_t i = 0; i != 2; i++) {
         if (s[i] >= 49 && s[i] <= 53) {
             return s[i] - 48;
         }
@@ -78,38 +75,28 @@ int
     return 5;
 }
 
-static std::map<std::string,int>
-    read_element_types
-        (tntdb::Connection &conn)
+static std::map<std::string, int> read_element_types(tntdb::Connection& conn)
 {
     auto res = get_dictionary_element_type(conn);
     // in case of any error, it would be empty
     return res.item;
 }
 
-static std::map<std::string,int>
-    read_device_types
-        (tntdb::Connection &conn)
+static std::map<std::string, int> read_device_types(tntdb::Connection& conn)
 {
     auto res = get_dictionary_device_type(conn);
     // in case of any error, it would be empty
     return res.item;
 }
 
-static bool
-    check_u_size
-        (std::string &s)
+static bool check_u_size(std::string& s)
 {
-    static cxxtools::Regex regex("^[0-9]{1,2}[uU]?$");
-    if ( !regex.match(s) )
-    {
+    static std::regex regex("^[0-9]{1,2}[uU]?$");
+    if (!std::regex_match(s, regex)) {
         return false;
-    }
-    else
-    {
+    } else {
         // need to drop the "U"
-        if ( ! (::isdigit(s.back())) )
-        {
+        if (!(::isdigit(s.back()))) {
             s.pop_back();
         }
         // remove trailing 0
@@ -120,43 +107,35 @@ static bool
     }
 }
 
-static bool
-    match_ext_attr
-        (std::string &value, const std::string &key)
+static bool match_ext_attr(std::string& value, const std::string& key)
 {
-    if ( key == "u_size" )
-    {
+    if (key == "u_size") {
         return check_u_size(value);
     }
-    return ( !value.empty() );
+    return (!value.empty());
 }
 
 // check if key contains date
 // ... warranty_end or ends with _date
-static bool
-    is_date (const std::string &key)
+static bool is_date(const std::string& key)
 {
-    static cxxtools::Regex regex{"(^warranty_end$|_date$)"};
-    return regex.match (key);
+    static std::regex regex{"(^warranty_end$|_date$)"};
+    return std::regex_match(key, regex);
 }
 
-static double
-sanitize_value_double(
-    const std::string &key,
-    const std::string &value)
+static double sanitize_value_double(const std::string& key, const std::string& value)
 {
     try {
-        std::size_t pos = 0;
-        double d_value = std::stod (value, &pos);
-        if  ( pos != value.length() ) {
-            log_info ("Extattribute: %s='%s' is not double", key.c_str(), value.c_str());
-            bios_throw ("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), "value should be a number");
+        std::size_t pos     = 0;
+        double      d_value = std::stod(value, &pos);
+        if (pos != value.length()) {
+            log_info("Extattribute: %s='%s' is not double", key.c_str(), value.c_str());
+            bios_throw("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), "value should be a number");
         }
         return d_value;
-    }
-    catch (const std::exception &e ) {
-        log_info ("Extattribute: %s='%s' is not double", key.c_str(), value.c_str());
-        bios_throw ("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), "value should be a number");
+    } catch (const std::exception& e) {
+        log_info("Extattribute: %s='%s' is not double", key.c_str(), value.c_str());
+        bios_throw("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), "value should be a number");
     }
 }
 
@@ -164,11 +143,13 @@ sanitize_value_double(
 /*
  * \brief Case insensitive comparison
  */
-bool findStringIC(const std::string &strHaystack, const std::string &strNeedle)
+bool findStringIC(const std::string& strHaystack, const std::string& strNeedle)
 {
-    auto it = std::search (strHaystack.begin(), strHaystack.end(), strNeedle.begin(), strNeedle.end(),
-            [](char ch1, char ch2) { return std::toupper(ch1) == std::toupper(ch2); } );
-  return (it != strHaystack.end() );
+    auto it =
+        std::search(strHaystack.begin(), strHaystack.end(), strNeedle.begin(), strNeedle.end(), [](char ch1, char ch2) {
+            return std::toupper(ch1) == std::toupper(ch2);
+        });
+    return (it != strHaystack.end());
 }
 
 
@@ -179,13 +160,14 @@ bool findStringIC(const std::string &strHaystack, const std::string &strNeedle)
  * \return >0 on successfull match
  */
 int check_column_match(
-        const std::string &column_name,
-        std::unordered_set<std::string> &to_check,
-        std::set<std::string> &unused_columns,
-        std::vector<size_t> &rcs_in_csv,
-        const CsvMap &cm,
-        bool match_mode,
-        bool fail_on_not_found = true) {
+    const std::string&               column_name,
+    std::unordered_set<std::string>& to_check,
+    std::set<std::string>&           unused_columns,
+    const std::vector<size_t>&       rcs_in_csv,
+    const CsvMap&                    cm,
+    bool                             match_mode,
+    bool                             fail_on_not_found = true)
+{
     if (to_check.empty()) {
         return 0;
     }
@@ -195,18 +177,18 @@ int check_column_match(
             for (size_t row_i : rcs_in_csv) {
                 std::string verify = cm.get(row_i, column_name);
                 if (match_mode) {
-                    //optimized for find
+                    // optimized for find
                     auto found = to_check.find(verify);
                     if (found != to_check.end()) {
                         log_debug("Picked by %s matching '%s'='%s'", column_name.c_str(), verify.c_str(), found->c_str());
-                        return row_i;
+                        return int(row_i);
                     }
                 } else {
-                    //less optimal for iteration
+                    // less optimal for iteration
                     for (auto to_check_element : to_check) {
                         if (findStringIC(verify, to_check_element)) {
                             log_debug("Picked by %s partial match", column_name.c_str());
-                            return row_i;
+                            return int(row_i);
                         }
                     }
                 }
@@ -228,19 +210,19 @@ int check_column_match(
  * \brief Overloading of check_column_match for easier usage
  */
 int check_column_match(
-        const std::string &column_name_str,
-        char *to_check,
-        std::set<std::string> &unused_columns,
-        std::vector<size_t> &rcs_in_csv,
-        const CsvMap &cm,
-        bool match_mode = true,
-        bool fail_on_not_found = true) {
+    const std::string&         column_name_str,
+    char*                      to_check,
+    std::set<std::string>&     unused_columns,
+    const std::vector<size_t>& rcs_in_csv,
+    const CsvMap&              cm,
+    bool                       match_mode        = true,
+    bool                       fail_on_not_found = true)
+{
     std::unordered_set<std::string> to_check_set;
     if (NULL != to_check) {
         to_check_set.emplace(to_check);
     }
-    return check_column_match(column_name_str, to_check_set,
-            unused_columns, rcs_in_csv, cm, match_mode, fail_on_not_found);
+    return check_column_match(column_name_str, to_check_set, unused_columns, rcs_in_csv, cm, match_mode, fail_on_not_found);
 }
 
 
@@ -251,20 +233,17 @@ int check_column_match(
  * \return number of rows + 1 when RC-0 not found
  * \throw runtime_error on failure
  */
-int
-promote_rc0(
-        MlmClient *client,
-         const CsvMap& cm,
-         touch_cb_t touch_fn) {
-    char have_ids = 0;
-    int rc0_row = -1;
-    char *info_ip1 = NULL;
-    char *info_ip2 = NULL;
-    char *info_ip3 = NULL;
-    char *info_serial = NULL;
-    char *info_hostname = NULL;
-    zhash_t *myself_db_ext = NULL;
-    std::vector<char *> rcs_in_db;
+int promote_rc0(MlmClient* client, const CsvMap& cm, touch_cb_t touch_fn)
+{
+    uint64_t            have_ids      = 0;
+    int                 rc0_row       = -1;
+    char*               info_ip1      = NULL;
+    char*               info_ip2      = NULL;
+    char*               info_ip3      = NULL;
+    char*               info_serial   = NULL;
+    char*               info_hostname = NULL;
+    zhash_t*            myself_db_ext = NULL;
+    std::vector<char*>  rcs_in_db;
     std::vector<size_t> rcs_in_csv;
 
     log_debug("Function called: promote_rc0");
@@ -272,122 +251,124 @@ promote_rc0(
     // first find all rows with rcs_in_db
     auto unused_columns = cm.getTitles();
     if (unused_columns.empty()) {
-        std::string err = TRANSLATE_ME ("Cannot import empty document.");
-        bios_throw("bad-request-document", err.c_str ());
+        std::string err = TRANSLATE_ME("Cannot import empty document.");
+        bios_throw("bad-request-document", err.c_str());
     }
     have_ids = unused_columns.count("id");
     for (size_t row_i = 1; row_i != cm.rows(); row_i++) {
-        std::string type = unused_columns.count("type") ? cm.get(row_i, "type") : "notype";
+        std::string type    = unused_columns.count("type") ? cm.get(row_i, "type") : "notype";
         std::string subtype = unused_columns.count("sub_type") ? cm.get(row_i, "sub_type") : "nosubtype";
-        if (0 == type.compare(0, strlen("device"), "device") && 0 == subtype.compare(0, strlen("rackcontroller"), "rackcontroller")) {
+        if (0 == type.compare(0, strlen("device"), "device") &&
+            0 == subtype.compare(0, strlen("rackcontroller"), "rackcontroller")) {
             log_debug("CSV contains RC on row %u", row_i);
             rcs_in_csv.push_back(row_i);
             if (have_ids && 0 == cm.get(row_i, "id").compare("rackcontroller-0")) {
-                rc0_row = rcs_in_csv.size() - 1;
+                rc0_row = int(rcs_in_csv.size() - 1);
                 log_debug("identified RC-0 as %d item of RCs list", row_i);
             }
         }
     }
     if (0 == rcs_in_csv.size()) {
         log_debug("There are no RCs in CSV, returning -1");
-        return cm.rows() + 1;
+        return int(cm.rows() + 1);
     }
     touch_fn(); // renew request watchdog timer
 
     // ask for data about myself - info first
-    zuuid_t *uuid = zuuid_new ();
-    zmsg_t *msg = zmsg_new ();
-    zmsg_addstr (msg, "INFO");
-    zmsg_addstr (msg, zuuid_str_canonical (uuid));
-    if (-1 == client->sendto ("fty-info", "info", 1000, &msg)) {
-        zuuid_destroy (&uuid);
-        zmsg_destroy (&msg);
-        throw std::runtime_error(TRANSLATE_ME ("Sending INFO message to fty-info failed"));
+    zuuid_t* uuid = zuuid_new();
+    zmsg_t*  msg  = zmsg_new();
+    zmsg_addstr(msg, "INFO");
+    zmsg_addstr(msg, zuuid_str_canonical(uuid));
+    if (-1 == client->sendto("fty-info", "info", 1000, &msg)) {
+        zuuid_destroy(&uuid);
+        zmsg_destroy(&msg);
+        throw std::runtime_error(TRANSLATE_ME("Sending INFO message to fty-info failed"));
     }
     touch_fn(); // renew request watchdog timer
     // parse receieved data
-    zmsg_t *resp = client->recv (zuuid_str_canonical (uuid), 5);
+    zmsg_t* resp = client->recv(zuuid_str_canonical(uuid), 5);
     touch_fn(); // renew request watchdog timer
     if (NULL == resp) {
-        zuuid_destroy (&uuid);
-        throw std::runtime_error(TRANSLATE_ME ("Response on INFO message from fty-info is empty"));
+        zuuid_destroy(&uuid);
+        throw std::runtime_error(TRANSLATE_ME("Response on INFO message from fty-info is empty"));
     }
-    char *command = zmsg_popstr (resp);
+    char* command = zmsg_popstr(resp);
     if (0 == strcmp("ERROR", command)) {
-        zuuid_destroy (&uuid);
-        zstr_free (&command);
-        zmsg_destroy (&resp);
-        throw std::runtime_error(TRANSLATE_ME ("Response on INFO message from fty-info is ERROR"));
+        zuuid_destroy(&uuid);
+        zstr_free(&command);
+        zmsg_destroy(&resp);
+        throw std::runtime_error(TRANSLATE_ME("Response on INFO message from fty-info is ERROR"));
     }
-    char *srv_name  = zmsg_popstr (resp); // we don't really need those, but we need to popstr them
-    char *srv_type  = zmsg_popstr (resp);
-    char *srv_stype = zmsg_popstr (resp);
-    char *srv_port  = zmsg_popstr (resp);
+    char* srv_name  = zmsg_popstr(resp); // we don't really need those, but we need to popstr them
+    char* srv_type  = zmsg_popstr(resp);
+    char* srv_stype = zmsg_popstr(resp);
+    char* srv_port  = zmsg_popstr(resp);
     log_debug("Receieved message from info: %s %s %s %s %s", command, srv_name, srv_type, srv_stype, srv_port);
-    zframe_t *frame_infos = zmsg_next (resp);
+    zframe_t* frame_infos = zmsg_next(resp);
     if (NULL == frame_infos) {
-        zuuid_destroy (&uuid);
-        zstr_free (&command);
+        zuuid_destroy(&uuid);
+        zstr_free(&command);
         zstr_free(&srv_name);
         zstr_free(&srv_type);
         zstr_free(&srv_stype);
         zstr_free(&srv_port);
-        zframe_destroy (&frame_infos);
-        zmsg_destroy (&resp);
-        throw std::runtime_error(TRANSLATE_ME ("Response on INFO message from fty-info miss zhash frame"));
+        zframe_destroy(&frame_infos);
+        zmsg_destroy(&resp);
+        throw std::runtime_error(TRANSLATE_ME("Response on INFO message from fty-info miss zhash frame"));
     }
-    zhash_t *info = zhash_unpack(frame_infos); // serial, hostname, ip.[1-3]
+    zhash_t* info = zhash_unpack(frame_infos); // serial, hostname, ip.[1-3]
     /*char * item = (char *)zhash_first(info);
     while (NULL != item) {
         item = (char *)zhash_next(info);
     }*/
-    zstr_free (&command);
+    zstr_free(&command);
     zstr_free(&srv_name);
     zstr_free(&srv_type);
     zstr_free(&srv_stype);
     zstr_free(&srv_port);
-    info_ip1 = (char *)zhash_lookup(info, "ip.1");
-    info_ip2 = (char *)zhash_lookup(info, "ip.2");
-    info_ip3 = (char *)zhash_lookup(info, "ip.3");
-    info_serial = (char *)zhash_lookup(info, "serial");
-    info_hostname = (char *)zhash_lookup(info, "hostname");
-    log_debug("Receieved message from info: ip1=%s, ip2=%s, ip3=%s, serial=%s, hostname=%s",
-            info_ip1, info_ip2, info_ip3, info_serial, info_hostname);
-    zmsg_destroy (&resp);
+    info_ip1      = static_cast<char*>(zhash_lookup(info, "ip.1"));
+    info_ip2      = static_cast<char*>(zhash_lookup(info, "ip.2"));
+    info_ip3      = static_cast<char*>(zhash_lookup(info, "ip.3"));
+    info_serial   = static_cast<char*>(zhash_lookup(info, "serial"));
+    info_hostname = static_cast<char*>(zhash_lookup(info, "hostname"));
+    log_debug(
+        "Receieved message from info: ip1=%s, ip2=%s, ip3=%s, serial=%s, hostname=%s", info_ip1, info_ip2, info_ip3,
+        info_serial, info_hostname);
+    zmsg_destroy(&resp);
     touch_fn(); // renew request watchdog timer
 
     // ask for data about myself - asset next
-    msg = zmsg_new ();
-    zmsg_addstr (msg, "GET");
-    //FIXME: use new UUID here
-    zmsg_addstr (msg, zuuid_str_canonical (uuid));
-    zmsg_addstr (msg, "rackcontroller-0");
-    if (-1 == client->sendto ("asset-agent", "ASSET_DETAIL", 1000, &msg)) {
-        zuuid_destroy (&uuid);
-        zmsg_destroy (&msg);
-        throw std::runtime_error(TRANSLATE_ME ("Sending ASSET_DETAIL message to fty-asset failed"));
+    msg = zmsg_new();
+    zmsg_addstr(msg, "GET");
+    // FIXME: use new UUID here
+    zmsg_addstr(msg, zuuid_str_canonical(uuid));
+    zmsg_addstr(msg, "rackcontroller-0");
+    if (-1 == client->sendto("asset-agent", "ASSET_DETAIL", 1000, &msg)) {
+        zuuid_destroy(&uuid);
+        zmsg_destroy(&msg);
+        throw std::runtime_error(TRANSLATE_ME("Sending ASSET_DETAIL message to fty-asset failed"));
     }
     touch_fn(); // renew request watchdog timer
     // parse receieved data
-    resp = client->recv (zuuid_str_canonical (uuid), 5);
+    resp = client->recv(zuuid_str_canonical(uuid), 5);
     touch_fn(); // renew request watchdog timer
     if (NULL == resp) {
-        zuuid_destroy (&uuid);
-        throw std::runtime_error(TRANSLATE_ME ("Response on ASSET_DETAIL message from fty-asset is empty"));
+        zuuid_destroy(&uuid);
+        throw std::runtime_error(TRANSLATE_ME("Response on ASSET_DETAIL message from fty-asset is empty"));
     }
-    fty_proto_t *myself_db = NULL;
-    if (fty_proto_is (resp)) {
-        myself_db = fty_proto_decode (&resp);
+    fty_proto_t* myself_db = NULL;
+    if (fty_proto_is(resp)) {
+        myself_db = fty_proto_decode(&resp);
         if (NULL == myself_db) {
             myself_db_ext = NULL;
         } else {
             myself_db_ext = fty_proto_get_ext(myself_db);
         }
         // workaround for having count of RC assets, as we consider only 0/1+ state
-        rcs_in_db.push_back((char*)"rackcontroller-0");
+        rcs_in_db.push_back(const_cast<char*>("rackcontroller-0"));
     } else {
         log_debug("Receieved message that is not fty_proto");
-        zmsg_destroy (&resp);
+        zmsg_destroy(&resp);
         myself_db_ext = NULL;
     }
     if (NULL == myself_db_ext) {
@@ -396,7 +377,7 @@ promote_rc0(
     } else {
         log_debug("Receieved message from asset: RC-0 data gained successfully");
     }
-    fty_proto_destroy (&myself_db);
+    fty_proto_destroy(&myself_db);
     touch_fn(); // renew request watchdog timer
 
     /*
@@ -449,7 +430,7 @@ promote_rc0(
             // multiple RCs, check for RC-0 for promotion
             if (-1 != rc0_row) {
                 log_debug("Pick one marked as RC-0");
-                retval = rcs_in_csv[rc0_row];
+                retval = rcs_in_csv[size_t(rc0_row)];
                 break;
             }
         } else {
@@ -462,70 +443,78 @@ promote_rc0(
             break;
         }
         // check for uuid match
-        char *my_uuid = (char *)zhash_lookup (myself_db_ext, "uuid");
-        retval = check_column_match("uuid", my_uuid, unused_columns, rcs_in_csv, cm);
-        if (0 != retval) break;
+        char* my_uuid = static_cast<char*>(zhash_lookup(myself_db_ext, "uuid"));
+        retval        = size_t(check_column_match("uuid", my_uuid, unused_columns, rcs_in_csv, cm));
+        if (0 != retval)
+            break;
         // check for serial number match
-        char *checked_sn = (char *)zhash_lookup (myself_db_ext, "serial_no");
+        char* checked_sn = static_cast<char*>(zhash_lookup(myself_db_ext, "serial_no"));
         if (NULL == checked_sn || 0 == strcmp(checked_sn, "")) {
             checked_sn = info_serial;
         }
-        retval = check_column_match("serial_no", checked_sn, unused_columns, rcs_in_csv, cm);
-        if (0 != retval) break;
+        retval = size_t(check_column_match("serial_no", checked_sn, unused_columns, rcs_in_csv, cm));
+        if (0 != retval)
+            break;
         // check hostname match
-        char *checked_hname = (char *)zhash_lookup (myself_db_ext, "hostname.1");
+        char* checked_hname = static_cast<char*>(zhash_lookup(myself_db_ext, "hostname.1"));
         if (NULL == checked_hname || 0 == strcmp(checked_hname, "")) {
             checked_hname = info_hostname;
         }
-        retval = check_column_match("hostname.1", checked_hname, unused_columns, rcs_in_csv, cm);
-        if (0 != retval) break;
+        retval = size_t(check_column_match("hostname.1", checked_hname, unused_columns, rcs_in_csv, cm));
+        if (0 != retval)
+            break;
         // check for fqdn match
-        char *my_fqdn = (char *)zhash_lookup (myself_db_ext, "fqdn.1");
-        retval = check_column_match("fqdn.1", my_fqdn, unused_columns, rcs_in_csv, cm);
-        if (0 != retval) break;
+        char* my_fqdn = static_cast<char*>(zhash_lookup(myself_db_ext, "fqdn.1"));
+        retval        = size_t(check_column_match("fqdn.1", my_fqdn, unused_columns, rcs_in_csv, cm));
+        if (0 != retval)
+            break;
         // check name contains hostname
-        retval = check_column_match("name", checked_hname, unused_columns, rcs_in_csv, cm, false, false);
-        if (0 != retval) break;
+        retval = size_t(check_column_match("name", checked_hname, unused_columns, rcs_in_csv, cm, false, false));
+        if (0 != retval)
+            break;
         // check name contains fqdn
-        retval = check_column_match("name", my_fqdn, unused_columns, rcs_in_csv, cm, false, false);
-        if (0 != retval) break;
+        retval = size_t(check_column_match("name", my_fqdn, unused_columns, rcs_in_csv, cm, false, false));
+        if (0 != retval)
+            break;
         // then check ip address
-        char *my_ip1 = (char *)zhash_lookup (myself_db_ext, "ip.1");
-        if (NULL != my_ip1 && 0 != strcmp(my_ip1, "") &&
-                0 != strcmp(my_ip1, "127.0.0.1") && 0 != strcmp(my_ip1, "::1")) {
-            retval = check_column_match("ip.1", my_ip1, unused_columns, rcs_in_csv, cm);
-            if (0 != retval) break;
+        char* my_ip1 = static_cast<char*>(zhash_lookup(myself_db_ext, "ip.1"));
+        if (NULL != my_ip1 && 0 != strcmp(my_ip1, "") && 0 != strcmp(my_ip1, "127.0.0.1") &&
+            0 != strcmp(my_ip1, "::1")) {
+            retval = size_t(check_column_match("ip.1", my_ip1, unused_columns, rcs_in_csv, cm));
+            if (0 != retval)
+                break;
         } else {
             std::unordered_set<std::string> ip_set;
-            if (NULL != info_ip1 && 0 != strcmp(info_ip1, "") &&
-                    0 != strcmp(info_ip1, "127.0.0.1") && 0 != strcmp(info_ip1, "::1")) {
+            if (NULL != info_ip1 && 0 != strcmp(info_ip1, "") && 0 != strcmp(info_ip1, "127.0.0.1") &&
+                0 != strcmp(info_ip1, "::1")) {
                 ip_set.emplace(info_ip1);
             }
-            if (NULL != info_ip2 && 0 != strcmp(info_ip2, "") &&
-                    0 != strcmp(info_ip2, "127.0.0.1") && 0 != strcmp(info_ip2, "::1")) {
+            if (NULL != info_ip2 && 0 != strcmp(info_ip2, "") && 0 != strcmp(info_ip2, "127.0.0.1") &&
+                0 != strcmp(info_ip2, "::1")) {
                 ip_set.emplace(info_ip2);
             }
-            if (NULL != info_ip3 && 0 != strcmp(info_ip3, "") &&
-                    0 != strcmp(info_ip3, "127.0.0.1") && 0 != strcmp(info_ip3, "::1")) {
+            if (NULL != info_ip3 && 0 != strcmp(info_ip3, "") && 0 != strcmp(info_ip3, "127.0.0.1") &&
+                0 != strcmp(info_ip3, "::1")) {
                 ip_set.emplace(info_ip3);
             }
             if (!ip_set.empty()) {
-                retval = check_column_match("ip.1", info_ip1, unused_columns, rcs_in_csv, cm);
-                if (0 != retval) break;
+                retval = size_t(check_column_match("ip.1", info_ip1, unused_columns, rcs_in_csv, cm));
+                if (0 != retval)
+                    break;
             }
         }
         // database is empty, or this is considered initial import, take first available
         if (0 == rcs_in_db.size() || 0 == unused_columns.count("id")) {
             if (-1 != rc0_row) {
                 log_debug("Pick one marked as RC-0");
-                retval = rcs_in_csv[rc0_row];
+                retval = rcs_in_csv[size_t(rc0_row)];
                 break;
             }
             log_debug("Picked first available");
             retval = rcs_in_csv[0];
             break;
         }
-        retval = cm.rows () + 1;
+        retval = cm.rows() + 1;
     } while (0);
     zhash_destroy(&info);
     if (unused_columns.count("name") && retval < cm.rows()) {
@@ -535,50 +524,51 @@ promote_rc0(
         log_debug("Resulting RC-0 output is %zu, having no name", retval);
     }
     touch_fn(); // renew request watchdog timer
-    return retval;
+    return int(retval);
 }
 
 
 /*
  * \brief Replace user defined names with internal names
  */
-std::map <std::string, std::string>sanitize_row_ext_names (
-    const CsvMap &cm,
-    size_t row_i,
-    bool sanitize
-)
+std::map<std::string, std::string> sanitize_row_ext_names(const CsvMap& cm, size_t row_i, bool sanitize)
 {
-    std::map <std::string, std::string> result;
+    std::map<std::string, std::string> result;
     // make copy of this one line
-    for (auto title: cm.getTitles ()) {
+    for (auto title : cm.getTitles()) {
         result[title] = cm.get(row_i, title);
     }
     if (sanitize) {
         // sanitize ext names to t_bios_asset_element.name
-        auto sanitizeList = {"location", "logical_asset", "power_source.", "group." };
-        for (auto item: sanitizeList) {
-            if (item [strlen (item) - 1] == '.') {
+        auto sanitizeList = {"location", "logical_asset", "power_source.", "group."};
+        for (auto item : sanitizeList) {
+            if (item[strlen(item) - 1] == '.') {
                 // iterate index .X
                 for (int i = 1; true; ++i) {
-                    std::string title = item + std::to_string (i);
-                    auto it = result.find (title);
-                    if (it == result.end ()) break;
+                    std::string title = item + std::to_string(i);
+                    auto        it    = result.find(title);
+                    if (it == result.end())
+                        break;
 
                     std::string name;
-                    int rv = DBAssets::extname_to_asset_name (it->second, name);
-                    if (rv != 0) { name = it->second; }
-                    log_debug ("sanitized %s '%s' -> '%s'", title.c_str(), it->second.c_str(), name.c_str ());
-                    result [title] = name;
+                    int         rv = DBAssets::extname_to_asset_name(it->second, name);
+                    if (rv != 0) {
+                        name = it->second;
+                    }
+                    log_debug("sanitized %s '%s' -> '%s'", title.c_str(), it->second.c_str(), name.c_str());
+                    result[title] = name;
                 }
             } else {
                 // simple name
-                auto it = result.find (item);
-                if (it != result.end ()) {
+                auto it = result.find(item);
+                if (it != result.end()) {
                     std::string name;
-                    int rv = DBAssets::extname_to_asset_name (it->second, name);
-                    if (rv != 0) { name = it->second; }
-                    log_debug ("sanitized %s '%s' -> '%s'", it->first.c_str (), it->second.c_str(), name.c_str ());
-                    result [item] = name;
+                    int         rv = DBAssets::extname_to_asset_name(it->second, name);
+                    if (rv != 0) {
+                        name = it->second;
+                    }
+                    log_debug("sanitized %s '%s' -> '%s'", it->first.c_str(), it->second.c_str(), name.c_str());
+                    result[item] = name;
                 }
             }
         }
@@ -593,58 +583,60 @@ std::map <std::string, std::string>sanitize_row_ext_names (
  *
  */
 
-void get_licensing_limitation(LIMITATIONS_STRUCT &limitations)
+void get_licensing_limitation(LIMITATIONS_STRUCT& limitations)
 {
     // default values
     limitations.max_active_power_devices = -1;
-    limitations.global_configurability = 0;
+    limitations.global_configurability   = 0;
     // query values
-    MlmClientPool::Ptr client_ptr = mlm_pool.get ();
-    zmsg_t *request = zmsg_new();
-    zmsg_addstr (request, "LIMITATION_QUERY");
-    zuuid_t *zuuid = zuuid_new ();
-    const char *zuuid_str = zuuid_str_canonical (zuuid);
-    zmsg_addstr (request, zuuid_str);
-    zmsg_addstr (request, "*");
-    zmsg_addstr (request, "*");
-    int rv = client_ptr->sendto ("etn-licensing", "LIMITATION_QUERY", 1000, &request);
+    auto    client_ptr = mlm_pool.get();
+    zmsg_t* request    = zmsg_new();
+    zmsg_addstr(request, "LIMITATION_QUERY");
+    zuuid_t*    zuuid     = zuuid_new();
+    const char* zuuid_str = zuuid_str_canonical(zuuid);
+    zmsg_addstr(request, zuuid_str);
+    zmsg_addstr(request, "*");
+    zmsg_addstr(request, "*");
+    int rv = client_ptr->sendto("etn-licensing", "LIMITATION_QUERY", 1000, &request);
     if (rv == -1) {
-        zuuid_destroy (&zuuid);
-        zmsg_destroy (&request);
-        log_fatal ("Cannot send message to etn-licensing");
-        std::string err = TRANSLATE_ME ("mlm_client_sendto failed.");
-        bios_throw ("internal-error", err.c_str ());
+        zuuid_destroy(&zuuid);
+        zmsg_destroy(&request);
+        log_fatal("Cannot send message to etn-licensing");
+        std::string err = TRANSLATE_ME("mlm_client_sendto failed.");
+        bios_throw("internal-error", err.c_str());
     }
 
-    zmsg_t *response = client_ptr->recv (zuuid_str, 30);
-    zuuid_destroy (&zuuid);
+    zmsg_t* response = client_ptr->recv(zuuid_str, 30);
+    zuuid_destroy(&zuuid);
     if (!response) {
-        log_fatal ("client->recv (timeout = '30') returned NULL for LIMITATION_QUERY");
-        std::string err = TRANSLATE_ME ("client->recv () returned NULL");
-        bios_throw ("internal-error", err.c_str ());
+        log_fatal("client->recv (timeout = '30') returned NULL for LIMITATION_QUERY");
+        std::string err = TRANSLATE_ME("client->recv () returned NULL");
+        bios_throw("internal-error", err.c_str());
     }
-    char *reply = zmsg_popstr (response);
-    char *status = zmsg_popstr (response);
-    if (streq (status, "OK") && streq (reply, "REPLY")) {
-        zmsg_t *submsg = zmsg_popmsg(response);
+    char* reply  = zmsg_popstr(response);
+    char* status = zmsg_popstr(response);
+    if (streq(status, "OK") && streq(reply, "REPLY")) {
+        zmsg_t* submsg = zmsg_popmsg(response);
         while (submsg) {
-            fty_proto_t *submetric = fty_proto_decode(&submsg);
-            assert (fty_proto_id(submetric) == FTY_PROTO_METRIC);
-            if (streq (fty_proto_name(submetric), "rackcontroller-0") && streq (fty_proto_type(submetric), "power_nodes.max_active")) {
-                limitations.max_active_power_devices = atoi(fty_proto_value (submetric));
+            fty_proto_t* submetric = fty_proto_decode(&submsg);
+            assert(fty_proto_id(submetric) == FTY_PROTO_METRIC);
+            if (streq(fty_proto_name(submetric), "rackcontroller-0") &&
+                streq(fty_proto_type(submetric), "power_nodes.max_active")) {
+                limitations.max_active_power_devices = atoi(fty_proto_value(submetric));
                 log_debug("limitations.max_active_power_device set to %i", limitations.max_active_power_devices);
-            }
-            else if (streq (fty_proto_name(submetric), "rackcontroller-0") && streq (fty_proto_type(submetric), "configurability.global")) {
-                limitations.global_configurability = atoi(fty_proto_value (submetric));
+            } else if (
+                streq(fty_proto_name(submetric), "rackcontroller-0") &&
+                streq(fty_proto_type(submetric), "configurability.global")) {
+                limitations.global_configurability = atoi(fty_proto_value(submetric));
                 log_debug("limitations.global_configurability set to %i", limitations.global_configurability);
             }
             fty_proto_destroy(&submetric);
             submsg = zmsg_popmsg(response);
         }
     }
-    zstr_free (&reply);
-    zstr_free (&status);
-    zmsg_destroy (&response);
+    zstr_free(&reply);
+    zstr_free(&status);
+    zmsg_destroy(&response);
 }
 
 
@@ -659,35 +651,32 @@ void get_licensing_limitation(LIMITATIONS_STRUCT &limitations)
  * \param[in][out] ids - list of already seen asset ids
  *
  */
-static std::pair<db_a_elmnt_t, persist::asset_operation>
-    process_row
-        (tntdb::Connection &conn,
-         const CsvMap &cm,
-         size_t row_i,
-         const std::map<std::string,int> &TYPES,
-         const std::map<std::string,int> &SUBTYPES,
-         std::set<a_elmnt_id_t> &ids,
-         bool sanitize,
-         size_t rc_0,
-         LIMITATIONS_STRUCT limitations,
-         std::string & warningMessages
-         )
+static std::pair<db_a_elmnt_t, persist::asset_operation> process_row(
+    tntdb::Connection&                conn,
+    const CsvMap&                     cm,
+    size_t                            row_i,
+    const std::map<std::string, int>& TYPES,
+    const std::map<std::string, int>& SUBTYPES,
+    std::set<a_elmnt_id_t>&           ids,
+    bool                              sanitize,
+    size_t                            rc_0,
+    LIMITATIONS_STRUCT                limitations,
+    std::string&                      warningMessages)
 {
     LOG_START;
-    warningMessages="";
+    warningMessages = "";
 
-    log_debug ("################ Row number is %zu", row_i);
-    static const std::set<std::string> STATUSES = \
-        { "active", "nonactive", "spare", "retired"};
+    log_debug("################ Row number is %zu", row_i);
+    static const std::set<std::string> STATUSES = {"active", "nonactive", "spare", "retired"};
 
     if (0 == limitations.global_configurability) {
-        std::string action = TRANSLATE_ME ("Asset handling");
-        std::string reason = TRANSLATE_ME ("Licensing global_configurability limit hit");
-        bios_throw("action-forbidden", action.c_str (), reason.c_str ());
+        std::string action = TRANSLATE_ME("Asset handling");
+        std::string reason = TRANSLATE_ME("Licensing global_configurability limit hit");
+        bios_throw("action-forbidden", action.c_str(), reason.c_str());
     }
 
     // get location, powersource etc as name from ext.name
-    auto sanitizedAssetNames = sanitize_row_ext_names (cm, row_i, sanitize);
+    auto sanitizedAssetNames = sanitize_row_ext_names(cm, row_i, sanitize);
 
     // This is used to track, which columns had been already processed,
     // because if they was't processed yet,
@@ -695,18 +684,18 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
     auto unused_columns = cm.getTitles();
 
     if (unused_columns.empty()) {
-        std::string err = TRANSLATE_ME ("Cannot import empty document.");
-        bios_throw("bad-request-document", err.c_str ());
+        std::string err = TRANSLATE_ME("Cannot import empty document.");
+        bios_throw("bad-request-document", err.c_str());
     }
 
     // remove the column 'create_mode' which is set to a different value anyway
     if (unused_columns.count("create_mode"))
-        unused_columns.erase ("create_mode");
+        unused_columns.erase("create_mode");
 
-   // because id is definitely not an external attribute
+    // because id is definitely not an external attribute
     auto id_str = unused_columns.count("id") ? cm.get(row_i, "id") : "";
-    log_debug ("id_str = %s, rc_0 = %d", id_str.c_str (), rc_0);
-    if (rc_0 != row_i && "rackcontroller-0" == id_str && rc_0 != std::numeric_limits<std::size_t>::max() ) {
+    log_debug("id_str = %s, rc_0 = %d", id_str.c_str(), rc_0);
+    if (rc_0 != row_i && "rackcontroller-0" == id_str && rc_0 != std::numeric_limits<std::size_t>::max()) {
         // we got RC-0 but it don't match "myself", change it to something else ("")
         log_debug("RC is marked as rackcontroller-0, but it's not myself");
         id_str = "";
@@ -717,15 +706,14 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
 
     unused_columns.erase("id");
     persist::asset_operation operation = persist::asset_operation::INSERT;
-    int64_t id = 0;
-    if ( !id_str.empty() )
-    {
-        id = DBAssets::name_to_asset_id (id_str);
+    int64_t                  id        = 0;
+    if (!id_str.empty()) {
+        id = DBAssets::name_to_asset_id(id_str);
         if (id == -1) {
-            bios_throw("element-not-found", id_str.c_str ());
+            bios_throw("element-not-found", id_str.c_str());
         }
-        if ( ids.count(id) == 1 ) {
-            std::string msg = TRANSLATE_ME ("Element id '%s' found twice, aborting", id_str.c_str ());
+        if (ids.count(uint32_t(id)) == 1) {
+            std::string msg = TRANSLATE_ME("Element id '%s' found twice, aborting", id_str.c_str());
             bios_throw("bad-request-document", msg.c_str());
         }
         /*
@@ -736,117 +724,113 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
     }
 
     auto ename = cm.get(row_i, "name");
-    if (ename.empty ()) {
-        std::string received = TRANSLATE_ME ("empty value");
-        std::string expected = TRANSLATE_ME ("unique, non empty value");
-        bios_throw("request-param-bad", "name", received.c_str (), expected.c_str ());
+    if (ename.empty()) {
+        std::string received = TRANSLATE_ME("empty value");
+        std::string expected = TRANSLATE_ME("unique, non empty value");
+        bios_throw("request-param-bad", "name", received.c_str(), expected.c_str());
     }
     if (ename.length() > 50) {
-        std::string received = TRANSLATE_ME ("too long string");
-        std::string expected = TRANSLATE_ME ("unique string from 1 to 50 characters");
-        bios_throw("request-param-bad", "name", received.c_str (), expected.c_str ());
+        std::string received = TRANSLATE_ME("too long string");
+        std::string expected = TRANSLATE_ME("unique string from 1 to 50 characters");
+        bios_throw("request-param-bad", "name", received.c_str(), expected.c_str());
     }
     std::string iname;
-    int rv = DBAssets::extname_to_asset_name (ename, iname);
-    if (!id_str.empty () && rv == 0) {
+    int         rv = DBAssets::extname_to_asset_name(ename, iname);
+    if (!id_str.empty() && rv == 0) {
         // internal name from DB must be the same as internal name from CSV
         if (iname != id_str) {
-            std::string received = TRANSLATE_ME ("already existing name");
-            std::string expected = TRANSLATE_ME ("unique string from 1 to 50 characters");
-            bios_throw("request-param-bad", "name", received.c_str (), expected.c_str ());
+            std::string received = TRANSLATE_ME("already existing name");
+            std::string expected = TRANSLATE_ME("unique string from 1 to 50 characters");
+            bios_throw("request-param-bad", "name", received.c_str(), expected.c_str());
         }
     }
-    log_debug ("name = '%s/%s'", ename.c_str(), iname.c_str());
+    log_debug("name = '%s/%s'", ename.c_str(), iname.c_str());
     if (rv == -2) {
-        std::string err = TRANSLATE_ME ("Database failure");
-        bios_throw("internal-error", err.c_str ());
+        std::string err = TRANSLATE_ME("Database failure");
+        bios_throw("internal-error", err.c_str());
     }
     unused_columns.erase("name");
 
     auto type = cm.get_strip(row_i, "type");
-    log_debug ("type = '%s'", type.c_str());
-    if ( TYPES.find(type) == TYPES.end() ) {
-        std::string received = type.empty() ? TRANSLATE_ME ("empty value") : JSONIFY (type.c_str());
+    log_debug("type = '%s'", type.c_str());
+    if (TYPES.find(type) == TYPES.end()) {
+        std::string received = type.empty() ? TRANSLATE_ME("empty value") : JSONIFY(type.c_str());
         std::string expected = JSONIFY(utils::join_keys_map(TYPES, ", ").c_str());
-        bios_throw("request-param-bad", "type", received.c_str (), expected.c_str ());
+        bios_throw("request-param-bad", "type", received.c_str(), expected.c_str());
     }
     auto type_id = TYPES.find(type)->second;
     unused_columns.erase("type");
 
     auto status = cm.get_strip(row_i, "status");
-    log_debug ("status = '%s'", status.c_str());
-    if ( STATUSES.find(status) == STATUSES.end() ) {
-        std::string received = status.empty() ? TRANSLATE_ME ("empty value") : JSONIFY (status.c_str());
-        std::string expected = JSONIFY(cxxtools::join(STATUSES.cbegin(), STATUSES.cend(), ", ").c_str());
-        bios_throw ("request-param-bad", "status", received.c_str (), expected.c_str ());
+    log_debug("status = '%s'", status.c_str());
+    if (STATUSES.find(status) == STATUSES.end()) {
+        std::string received = status.empty() ? TRANSLATE_ME("empty value") : JSONIFY(status.c_str());
+        std::string expected = JSONIFY(fty::implode(STATUSES, ", ").c_str());
+        bios_throw("request-param-bad", "status", received.c_str(), expected.c_str());
     }
     unused_columns.erase("status");
 
-    auto asset_tag =  unused_columns.count("asset_tag") ? cm.get(row_i, "asset_tag") : "";
-    log_debug ("asset_tag = '%s'", asset_tag.c_str());
+    auto asset_tag = unused_columns.count("asset_tag") ? cm.get(row_i, "asset_tag") : "";
+    log_debug("asset_tag = '%s'", asset_tag.c_str());
     if (asset_tag.length() > 50) {
-        std::string received = TRANSLATE_ME ("too long string");
-        std::string expected = TRANSLATE_ME ("unique string from 1 to 50 characters");
-        bios_throw("request-param-bad", "asset_tag", received.c_str (), expected.c_str ());
+        std::string received = TRANSLATE_ME("too long string");
+        std::string expected = TRANSLATE_ME("unique string from 1 to 50 characters");
+        bios_throw("request-param-bad", "asset_tag", received.c_str(), expected.c_str());
     }
     unused_columns.erase("asset_tag");
 
     int priority = get_priority(cm.get_strip(row_i, "priority"));
-    log_debug ("priority = %d", priority);
+    log_debug("priority = %d", priority);
     unused_columns.erase("priority");
 
-    auto location = sanitizedAssetNames ["location"];
-    log_debug ("location = '%s'", location.c_str());
+    auto location = sanitizedAssetNames["location"];
+    log_debug("location = '%s'", location.c_str());
     a_elmnt_id_t parent_id = 0;
-    if ( !location.empty() )
-    {
+    if (!location.empty()) {
         auto ret = select_asset_element_by_name(conn, location.c_str());
-        if ( ret.status == 1 )
+        if (ret.status == 1)
             parent_id = ret.item.id;
         else {
             if (ret.errsubtype == DB_ERROR_NOTFOUND) {
-                std::string expected = TRANSLATE_ME ("<existing asset name>");
-                bios_throw("request-param-bad", "location", location.c_str(), expected.c_str ());
-            }
-            else {
-                std::string err = TRANSLATE_ME ("Database failure");
-                bios_throw("internal-error", err.c_str ());
+                std::string expected = TRANSLATE_ME("<existing asset name>");
+                bios_throw("request-param-bad", "location", location.c_str(), expected.c_str());
+            } else {
+                std::string err = TRANSLATE_ME("Database failure");
+                bios_throw("internal-error", err.c_str());
             }
         }
     }
     unused_columns.erase("location");
 
     // Business requirement: be able to write 'rack controller', 'RC', 'rc' as subtype == 'rack controller'
-    std::map<std::string,int> local_SUBTYPES = SUBTYPES;
-    int rack_controller_id = SUBTYPES.find ("rack controller")->second;
-    int patch_panel_id = SUBTYPES.find ("patch panel")->second;
+    std::map<std::string, int> local_SUBTYPES     = SUBTYPES;
+    int                        rack_controller_id = SUBTYPES.find("rack controller")->second;
+    int                        patch_panel_id     = SUBTYPES.find("patch panel")->second;
 
-    local_SUBTYPES.emplace (std::make_pair ("rackcontroller", rack_controller_id));
-    local_SUBTYPES.emplace (std::make_pair ("rackcontroler", rack_controller_id));
-    local_SUBTYPES.emplace (std::make_pair ("rc", rack_controller_id));
-    local_SUBTYPES.emplace (std::make_pair ("RC", rack_controller_id));
-    local_SUBTYPES.emplace (std::make_pair ("RC3", rack_controller_id));
+    local_SUBTYPES.emplace(std::make_pair("rackcontroller", rack_controller_id));
+    local_SUBTYPES.emplace(std::make_pair("rackcontroler", rack_controller_id));
+    local_SUBTYPES.emplace(std::make_pair("rc", rack_controller_id));
+    local_SUBTYPES.emplace(std::make_pair("RC", rack_controller_id));
+    local_SUBTYPES.emplace(std::make_pair("RC3", rack_controller_id));
 
-    local_SUBTYPES.emplace (std::make_pair ("patchpanel", patch_panel_id));
+    local_SUBTYPES.emplace(std::make_pair("patchpanel", patch_panel_id));
 
-    auto subtype = cm.get_strip (row_i, "sub_type");
+    auto subtype = cm.get_strip(row_i, "sub_type");
 
-    log_debug ("subtype = '%s'", subtype.c_str());
-    if ( ( type == "device" ) &&
-         ( local_SUBTYPES.find(subtype) == local_SUBTYPES.cend() ) ) {
-        std::string received = subtype.empty() ? TRANSLATE_ME ("empty value") : JSONIFY (subtype.c_str());
+    log_debug("subtype = '%s'", subtype.c_str());
+    if ((type == "device") && (local_SUBTYPES.find(subtype) == local_SUBTYPES.cend())) {
+        std::string received = subtype.empty() ? TRANSLATE_ME("empty value") : JSONIFY(subtype.c_str());
         std::string expected = JSONIFY(utils::join_keys_map(SUBTYPES, ", ").c_str());
-        bios_throw("request-param-bad", "subtype", received.c_str (), expected.c_str ());
+        bios_throw("request-param-bad", "subtype", received.c_str(), expected.c_str());
     }
 
-    if ( ( !subtype.empty() ) && ( type != "device" ) && ( type != "group") )
-    {
-        log_warning ("'%s' - subtype is ignored", subtype.c_str());
+    if ((!subtype.empty()) && (type != "device") && (type != "group")) {
+        log_warning("'%s' - subtype is ignored", subtype.c_str());
     }
 
-    if ( ( subtype.empty() ) && ( type == "group" ) ) {
-        std::string expected = TRANSLATE_ME ("subtype (for type group)");
-        bios_throw("request-param-required", expected.c_str ());
+    if ((subtype.empty()) && (type == "group")) {
+        std::string expected = TRANSLATE_ME("subtype (for type group)");
+        bios_throw("request-param-required", expected.c_str());
     }
 
     auto subtype_id = local_SUBTYPES.find(subtype)->second;
@@ -854,29 +838,23 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
 
     // now we have read all basic information about element
     // if id is set, then it is right time to check what is going on in DB
-    if ( !id_str.empty() )
-    {
-        db_reply <db_web_basic_element_t> element_in_db = DBAssets::select_asset_element_web_byId
-                                                        (conn, id);
-        if ( element_in_db.status == 0 ) {
+    if (!id_str.empty()) {
+        db_reply<db_web_basic_element_t> element_in_db = DBAssets::select_asset_element_web_byId(conn, uint32_t(id));
+        if (element_in_db.status == 0) {
             if (element_in_db.errsubtype == DB_ERROR_NOTFOUND) {
                 bios_throw("element-not-found", id_str.c_str());
+            } else {
+                std::string err = TRANSLATE_ME("Database failure");
+                bios_throw("internal-error", err.c_str());
             }
-            else {
-                std::string err = TRANSLATE_ME ("Database failure");
-                bios_throw("internal-error", err.c_str ());
+        } else {
+            if (element_in_db.item.type_id != type_id) {
+                std::string err = TRANSLATE_ME("Changing of asset type is forbidden");
+                bios_throw("bad-request-document", err.c_str());
             }
-        }
-        else
-        {
-            if ( element_in_db.item.type_id != type_id ) {
-                std::string err = TRANSLATE_ME ("Changing of asset type is forbidden");
-                bios_throw("bad-request-document", err.c_str ());
-            }
-            if ( ( element_in_db.item.subtype_id != subtype_id ) &&
-                 ( element_in_db.item.subtype_name != "N_A" ) ) {
-                std::string err = TRANSLATE_ME ("Changing of asset subtype is forbidden");
-                bios_throw("bad-request-document", err.c_str ());
+            if ((element_in_db.item.subtype_id != subtype_id) && (element_in_db.item.subtype_name != "N_A")) {
+                std::string err = TRANSLATE_ME("Changing of asset subtype is forbidden");
+                bios_throw("bad-request-document", err.c_str());
             }
         }
     }
@@ -884,9 +862,8 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
     std::string group;
 
     // list of element ids of all groups, the element belongs to
-    std::set <a_elmnt_id_t>  groups{};
-    for ( int group_index = 1 ; true; group_index++ )
-    {
+    std::set<a_elmnt_id_t> groups{};
+    for (int group_index = 1; true; group_index++) {
         std::string grp_col_name = "";
         try {
             // column name
@@ -894,137 +871,121 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
             // remove from unused
             unused_columns.erase(grp_col_name);
             // take value
-            group = sanitizedAssetNames.at (grp_col_name);
-        }
-        catch (const std::out_of_range &e)
+            group = sanitizedAssetNames.at(grp_col_name);
+        } catch (const std::out_of_range& e)
         // if column doesn't exist, then break the cycle
         {
-            log_debug ("end of group processing");
-            log_debug ("%s", e.what());
+            log_debug("end of group processing");
+            log_debug("%s", e.what());
             break;
         }
-        log_debug ("group_name = '%s'", group.c_str());
+        log_debug("group_name = '%s'", group.c_str());
         // if group was not specified, just skip it
-        if ( !group.empty() )
-        {
+        if (!group.empty()) {
             // find an id from DB
             auto ret = select_asset_element_by_name(conn, group.c_str());
-            if ( ret.status == 1 )
-                groups.insert(ret.item.id);  // if OK, then take ID
-            else
-            {
+            if (ret.status == 1)
+                groups.insert(ret.item.id); // if OK, then take ID
+            else {
                 if (ret.errsubtype == DB_ERROR_NOTFOUND) {
-                    log_error ("group '%s' is not present in DB, rejected", group.c_str());
+                    log_error("group '%s' is not present in DB, rejected", group.c_str());
                     bios_throw("element-not-found", group.c_str());
-                }
-                else {
-                    std::string err = TRANSLATE_ME ("Database failure");
-                    bios_throw("internal-error", err.c_str ());
+                } else {
+                    std::string err = TRANSLATE_ME("Database failure");
+                    bios_throw("internal-error", err.c_str());
                 }
             }
         }
     }
 
-    std::vector <link_t>  links{};
-    std::string  link_source = "";
-    for ( int link_index = 1; true; link_index++ )
-    {
-        link_t one_link{0, 0, NULL, NULL, 0};
+    std::vector<link_t> links{};
+    std::string         link_source = "";
+    for (int link_index = 1; true; link_index++) {
+        link_t      one_link{0, 0, NULL, NULL, 0};
         std::string link_col_name = "";
         try {
             // column name
-            link_col_name = "power_source." +
-                                                std::to_string(link_index);
+            link_col_name = "power_source." + std::to_string(link_index);
             // remove from unused
             unused_columns.erase(link_col_name);
             // take value
-            link_source = sanitizedAssetNames.at (link_col_name);
-        }
-        catch (const std::out_of_range &e)
+            link_source = sanitizedAssetNames.at(link_col_name);
+        } catch (const std::out_of_range& e)
         // if column doesn't exist, then break the cycle
         {
-            log_debug ("end of power links processing");
-            log_debug ("%s", e.what());
+            log_debug("end of power links processing");
+            log_debug("%s", e.what());
             break;
         }
 
         // prevent power source being myself
         if (link_source == ename) {
-                log_debug("Ignoring power source=myself");
-                link_source = "";
-                auto link_col_name1 = "power_plug_src." + std::to_string(link_index);
-                auto link_col_name2 = "power_input." + std::to_string(link_index);
-                if (!link_col_name1.empty()) unused_columns.erase(link_col_name1);
-                if (!link_col_name2.empty()) unused_columns.erase(link_col_name2);
-                continue;
+            log_debug("Ignoring power source=myself");
+            link_source         = "";
+            auto link_col_name1 = "power_plug_src." + std::to_string(link_index);
+            auto link_col_name2 = "power_input." + std::to_string(link_index);
+            if (!link_col_name1.empty())
+                unused_columns.erase(link_col_name1);
+            if (!link_col_name2.empty())
+                unused_columns.erase(link_col_name2);
+            continue;
         }
 
-        log_debug ("power_source_name = '%s'", link_source.c_str());
-        if ( !link_source.empty() ) // if power source is not specified
+        log_debug("power_source_name = '%s'", link_source.c_str());
+        if (!link_source.empty()) // if power source is not specified
         {
             // find an id from DB
-            auto ret = select_asset_element_by_name
-                (conn, link_source.c_str());
-            if ( ret.status == 1 )
-                one_link.src = ret.item.id;  // if OK, then take ID
-            else
-            {
+            auto ret = select_asset_element_by_name(conn, link_source.c_str());
+            if (ret.status == 1)
+                one_link.src = ret.item.id; // if OK, then take ID
+            else {
                 if (ret.errsubtype == DB_ERROR_NOTFOUND) {
-                    log_warning ("power source '%s' is not present in DB, rejected",
-                    link_source.c_str());
+                    log_warning("power source '%s' is not present in DB, rejected", link_source.c_str());
                     bios_throw("element-not-found", link_source.c_str());
-                }
-                else {
-                    std::string err = TRANSLATE_ME ("Database failure");
-                    bios_throw("internal-error", err.c_str ());
+                } else {
+                    std::string err = TRANSLATE_ME("Database failure");
+                    bios_throw("internal-error", err.c_str());
                 }
             }
         }
 
         // column name
         auto link_col_name1 = "power_plug_src." + std::to_string(link_index);
-        try{
+        try {
             // remove from unused
             unused_columns.erase(link_col_name1);
             // take value
             auto link_source1 = cm.get(row_i, link_col_name1);
             // TODO: bad idea, char = byte
             // FIXME: THIS IS MEMORY LEAK!!!
-            one_link.src_out = new char [4];
-            strcpy ( one_link.src_out, link_source1.substr (0,4).c_str());
-        }
-        catch (const std::out_of_range &e)
-        {
-            log_debug ("'%s' - is missing at all", link_col_name1.c_str());
-            log_debug ("%s", e.what());
+            one_link.src_out = new char[4];
+            strcpy(one_link.src_out, link_source1.substr(0, 4).c_str());
+        } catch (const std::out_of_range& e) {
+            log_debug("'%s' - is missing at all", link_col_name1.c_str());
+            log_debug("%s", e.what());
         }
 
         // column name
         auto link_col_name2 = "power_input." + std::to_string(link_index);
-        try{
-            unused_columns.erase(link_col_name2); // remove from unused
-            auto link_source2 = cm.get(row_i, link_col_name2);// take value
+        try {
+            unused_columns.erase(link_col_name2);              // remove from unused
+            auto link_source2 = cm.get(row_i, link_col_name2); // take value
             // TODO: bad idea, char = byte
             // FIXME: THIS IS MEMORY LEAK!!!
-            one_link.dest_in = new char [4];
-            strcpy ( one_link.dest_in, link_source2.substr (0,4).c_str());
-        }
-        catch (const std::out_of_range &e)
-        {
-            log_debug ("'%s' - is missing at all", link_col_name2.c_str());
-            log_debug ("%s", e.what());
+            one_link.dest_in = new char[4];
+            strcpy(one_link.dest_in, link_source2.substr(0, 4).c_str());
+        } catch (const std::out_of_range& e) {
+            log_debug("'%s' - is missing at all", link_col_name2.c_str());
+            log_debug("%s", e.what());
         }
 
-        if ( one_link.src != 0 ) // if first column was ok
+        if (one_link.src != 0) // if first column was ok
         {
-            if ( type == "device" )
-            {
+            if (type == "device") {
                 one_link.type = 1; // TODO remove hardcoded constant
                 links.push_back(one_link);
-            }
-            else
-            {
-                log_warning ("information about power sources is ignored for type '%s'", type.c_str());
+            } else {
+                log_warning("information about power sources is ignored for type '%s'", type.c_str());
             }
         }
     }
@@ -1033,7 +994,7 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
     if (rc_0 == row_i && id_str != "rackcontroller-0") {
         int i;
         // remove all ip.X
-        for (i = 1; ; ++i) {
+        for (i = 1;; ++i) {
             std::string what = "ip." + std::to_string(i);
             if (unused_columns.count(what)) {
                 unused_columns.erase(what); // remove from unused
@@ -1042,7 +1003,7 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
             }
         }
         // remove all ipv6.X
-        for (i = 1; ; ++i) {
+        for (i = 1;; ++i) {
             std::string what = "ipv6." + std::to_string(i);
             if (unused_columns.count(what)) {
                 unused_columns.erase(what); // remove from unused
@@ -1072,118 +1033,104 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
         }
     }
 
-    _scoped_zhash_t *extattributes = zhash_new();
+    _scoped_zhash_t* extattributes = zhash_new();
     zhash_autofree(extattributes);
-    zhash_insert (extattributes, "name", (void *) ename.c_str ());
-    for ( auto &key: unused_columns )
-    {
+    zhash_insert(extattributes, "name", const_cast<char*>(ename.c_str()));
+    for (auto& key : unused_columns) {
         // try is not needed, because here are keys that are definitely there
         std::string value = cm.get(row_i, key);
 
         // BIOS-1564: sanitize the date for warranty_end -- start
-        if (is_date (key) && !value.empty()) {
-            char *date = sanitize_date (value.c_str());
+        if (is_date(key) && !value.empty()) {
+            char* date = sanitize_date(value.c_str());
             if (!date) {
-                log_info ("Cannot sanitize %s '%s' for device '%s'", key.c_str(), value.c_str(), ename.c_str());
+                log_info("Cannot sanitize %s '%s' for device '%s'", key.c_str(), value.c_str(), ename.c_str());
                 std::string expected = TRANSLATE_ME("ISO date");
-                bios_throw("request-param-bad", key.c_str(), value.c_str(), expected.c_str ());
+                bios_throw("request-param-bad", key.c_str(), value.c_str(), expected.c_str());
             }
-            value = date;
-            zstr_free (&date);
+            if (date) {
+                value = date;
+                zstr_free(&date);
+            }
         }
         // BIOS-1564 -- end
 
         // BIOS-2302: Check some attributes for sensors
         // BIOS-2784: Check max_current, max_power
-        if ( key == "logical_asset" && !value.empty() ) {
+        if (key == "logical_asset" && !value.empty()) {
             // check, that this asset exists
 
-            value = sanitizedAssetNames.at ("logical_asset");
+            value = sanitizedAssetNames.at("logical_asset");
 
-            auto ret = select_asset_element_by_name
-                (conn, value.c_str());
-            if ( ret.status == 0 ) {
+            auto ret = select_asset_element_by_name(conn, value.c_str());
+            if (ret.status == 0) {
                 if (ret.errsubtype == DB_ERROR_NOTFOUND) {
-                    log_info ("logical_asset '%s' does not present in DB, rejected",
-                    value.c_str());
+                    log_info("logical_asset '%s' does not present in DB, rejected", value.c_str());
                     bios_throw("element-not-found", value.c_str());
-                }
-                else {
-                    std::string err = TRANSLATE_ME ("Database failure");
-                    bios_throw("internal-error", err.c_str ());
+                } else {
+                    std::string err = TRANSLATE_ME("Database failure");
+                    bios_throw("internal-error", err.c_str());
                 }
 
-                log_info ("logical_asset '%s' does not present in DB, rejected",
-                    value.c_str());
+                log_info("logical_asset '%s' does not present in DB, rejected", value.c_str());
                 bios_throw("element-not-found", value.c_str());
             }
-        }
-        else
-        if (    ( key == "calibration_offset_t" || key == "calibration_offset_h" )
-             &&   !value.empty() )
-        {
+        } else if ((key == "calibration_offset_t" || key == "calibration_offset_h") && !value.empty()) {
             // we want exceptions to propagate to upper layer
-            sanitize_value_double (key, value);
-        }
-        else
-        if (    ( key == "max_current" || key == "max_power" )
-             &&   !value.empty() )
-        {
+            sanitize_value_double(key, value);
+        } else if ((key == "max_current" || key == "max_power") && !value.empty()) {
             // we want exceptions to propagate to upper layer
-            double d_value = sanitize_value_double (key, value);
-            if ( d_value < 0 ) {
-                log_info ("Extattribute: %s='%s' is neither positive not zero", key.c_str(), value.c_str());
-                std::string expected = TRANSLATE_ME ("value must be a not negative number");
-                bios_throw ("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), expected.c_str ());
+            double d_value = sanitize_value_double(key, value);
+            if (d_value < 0) {
+                log_info("Extattribute: %s='%s' is neither positive not zero", key.c_str(), value.c_str());
+                std::string expected = TRANSLATE_ME("value must be a not negative number");
+                bios_throw("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), expected.c_str());
             }
         }
         // BIOS-2781
-        if ( key == "location_u_pos" && !value.empty() ) {
+        if (key == "location_u_pos" && !value.empty()) {
             unsigned long ul = 0;
             try {
                 std::size_t pos = 0;
-                ul = std::stoul (value, &pos);
-                if  ( pos != value.length() ) {
-                    log_info ("Extattribute: %s='%s' is not unsigned integer", key.c_str(), value.c_str());
-                    std::string expected = TRANSLATE_ME ("value must be an unsigned integer");
-                    bios_throw ("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), expected.c_str ());
+                ul              = std::stoul(value, &pos);
+                if (pos != value.length()) {
+                    log_info("Extattribute: %s='%s' is not unsigned integer", key.c_str(), value.c_str());
+                    std::string expected = TRANSLATE_ME("value must be an unsigned integer");
+                    bios_throw("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), expected.c_str());
                 }
-            }
-            catch (const std::exception& e) {
-                log_info ("Extattribute: %s='%s' is not unsigned integer", key.c_str(), value.c_str());
-                std::string expected = TRANSLATE_ME ("value must be an unsigned integer");
-                bios_throw ("request-param-bad", "location_u_pos", ("'" + value + "'").c_str (), expected.c_str ());
+            } catch (const std::exception& e) {
+                log_info("Extattribute: %s='%s' is not unsigned integer", key.c_str(), value.c_str());
+                std::string expected = TRANSLATE_ME("value must be an unsigned integer");
+                bios_throw("request-param-bad", "location_u_pos", ("'" + value + "'").c_str(), expected.c_str());
             }
             if (ul == 0 || ul > 52) {
-                std::string expected = TRANSLATE_ME ("value must be between <1, 52>.");
-                bios_throw ("request-param-bad", "location_u_pos", ("'" + value + "'").c_str (), expected.c_str ());
+                std::string expected = TRANSLATE_ME("value must be between <1, 52>.");
+                bios_throw("request-param-bad", "location_u_pos", ("'" + value + "'").c_str(), expected.c_str());
             }
         }
         // BIOS-2799
-        if ( key == "u_size" && !value.empty() ) {
+        if (key == "u_size" && !value.empty()) {
             unsigned long ul = 0;
             try {
                 std::size_t pos = 0;
-                ul = std::stoul (value, &pos);
-                if  ( pos != value.length() ) {
-                    log_info ("Extattribute: %s='%s' is not unsigned integer", key.c_str(), value.c_str());
-                    std::string expected = TRANSLATE_ME ("value must be an unsigned integer");
-                    bios_throw ("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), expected.c_str ());
+                ul              = std::stoul(value, &pos);
+                if (pos != value.length()) {
+                    log_info("Extattribute: %s='%s' is not unsigned integer", key.c_str(), value.c_str());
+                    std::string expected = TRANSLATE_ME("value must be an unsigned integer");
+                    bios_throw("request-param-bad", key.c_str(), ("'" + value + "'").c_str(), expected.c_str());
                 }
-            }
-            catch (const std::exception& e) {
-                log_info ("Extattribute: %s='%s' is not unsigned integer", key.c_str(), value.c_str());
-                std::string expected = TRANSLATE_ME ("value must be an unsigned integer");
-                bios_throw ("request-param-bad", "u_size", ("'" + value + "'").c_str (), expected.c_str ());
+            } catch (const std::exception& e) {
+                log_info("Extattribute: %s='%s' is not unsigned integer", key.c_str(), value.c_str());
+                std::string expected = TRANSLATE_ME("value must be an unsigned integer");
+                bios_throw("request-param-bad", "u_size", ("'" + value + "'").c_str(), expected.c_str());
             }
             if (ul == 0 || ul > 52) {
-                std::string expected = TRANSLATE_ME ("value must be between <1, 52>.");
-                bios_throw ("request-param-bad", "u_size", ("'" + value + "'").c_str (), expected.c_str ());
+                std::string expected = TRANSLATE_ME("value must be between <1, 52>.");
+                bios_throw("request-param-bad", "u_size", ("'" + value + "'").c_str(), expected.c_str());
             }
         }
 
-        if ( match_ext_attr (value, key) )
-        {
+        if (match_ext_attr(value, key)) {
             // ACE: temporary disabled
             // for testing purposes for rabobank usecase
             // IMHO: There is no sense to check it at all
@@ -1202,7 +1149,7 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
                 continue;
             }
             */
-            zhash_insert (extattributes, key.c_str(), (void*)value.c_str());
+            zhash_insert(extattributes, key.c_str(), const_cast<char*>(value.c_str()));
         }
     }
     // if the row represents group, the subtype represents a type
@@ -1210,198 +1157,172 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
     // As group has no special table as device, then this information
     // sould be inserted as external attribute
     // this parametr is mandatory according rfc-11
-    if ( type == "group" )
-        zhash_insert (extattributes, "type", (void*) subtype.c_str() );
+    if (type == "group")
+        zhash_insert(extattributes, "type", const_cast<char*>(subtype.c_str()));
 
     db_a_elmnt_t m;
 
-    if ( !id_str.empty() ) //update operation
+    if (!id_str.empty()) // update operation
     {
-        _scoped_zhash_t *extattributesRO = zhash_new();
+        _scoped_zhash_t* extattributesRO = zhash_new();
         zhash_autofree(extattributesRO);
-        if(cm.getUpdateTs() != "")
-            zhash_insert(extattributesRO, "update_ts", (void*) cm.getUpdateTs().c_str());
-        if(cm.getUpdateUser() != "")
-            zhash_insert(extattributesRO, "update_user", (void*) cm.getUpdateUser().c_str());
-        m.id = id;
+        if (cm.getUpdateTs() != "")
+            zhash_insert(extattributesRO, "update_ts", const_cast<char*>(cm.getUpdateTs().c_str()));
+        if (cm.getUpdateUser() != "")
+            zhash_insert(extattributesRO, "update_user", const_cast<char*>(cm.getUpdateUser().c_str()));
+        m.id               = uint32_t(id);
         std::string errmsg = "";
-        if (type != "device" )
-        {
-            auto ret = update_dc_room_row_rack_group
-                (conn, m.id, iname.c_str(), type_id, parent_id,
-                 extattributes, status.c_str(), priority, groups, asset_tag, errmsg, extattributesRO);
-            if ( ( ret ) || ( !errmsg.empty() ) ) {
+        if (type != "device") {
+            auto ret = update_dc_room_row_rack_group(
+                conn, m.id, iname.c_str(), uint16_t(type_id), parent_id, extattributes, status.c_str(),
+                uint16_t(priority), groups, asset_tag, errmsg, extattributesRO);
+            if ((ret) || (!errmsg.empty())) {
                 throw std::invalid_argument(errmsg);
             }
-        }
-        else
-        {
-            if (id_str != "rackcontroller-0")
-            {
-                //get the current status
+        } else {
+            if (id_str != "rackcontroller-0") {
+                // get the current status
                 std::string currentStatus = DBAssets::get_status_from_db_helper(id_str);
 
-                if(currentStatus == "active") //unactive the asset
+                if (currentStatus == "active") // unactive the asset
                 {
-                    try
-                    {
-                        mlm::MlmSyncClient client (AGENT_FTY_ASSET, AGENT_ASSET_ACTIVATOR);
-                        fty::AssetActivator activationAccessor (client);
-                        std::string asset_json = getJsonAsset (NULL, m.id);
-                        activationAccessor.deactivate (asset_json);
-                    }
-                    catch (const std::exception &e)
-                    {
-                        std::string err = JSONIFY (e.what());
-                        bios_throw ("licensing-err", err.c_str ())
+                    try {
+                        mlm::MlmSyncClient  client(AGENT_FTY_ASSET, AGENT_ASSET_ACTIVATOR);
+                        fty::AssetActivator activationAccessor(client);
+                        std::string         asset_json = getJsonAsset(NULL, m.id);
+                        activationAccessor.deactivate(asset_json);
+                    } catch (const std::exception& e) {
+                        std::string err = JSONIFY(e.what());
+                        bios_throw("licensing-err", err.c_str())
                     }
                 }
 
                 std::string requestedStatus = status;
 
-                if(status == "active")
-                {
+                if (status == "active") {
                     status = "nonactive";
                 }
 
-                //update the assert into the database
+                // update the assert into the database
                 {
                     tntdb::Transaction trans(conn);
-                    auto ret = update_device
-                        (conn, trans, m.id, iname.c_str(), type_id, parent_id,
-                        extattributes, "nonactive", priority, groups, links, asset_tag, errmsg, extattributesRO);
-                    if ( ( ret ) || ( !errmsg.empty() ) ) {
+                    auto               ret = update_device(
+                        conn, trans, m.id, iname.c_str(), uint16_t(type_id), parent_id, extattributes, "nonactive",
+                        uint16_t(priority), groups, links, asset_tag, errmsg, extattributesRO);
+                    if ((ret) || (!errmsg.empty())) {
                         throw std::invalid_argument(errmsg);
                     }
                 }
 
 
-                if (requestedStatus == "active") //active the asset
+                if (requestedStatus == "active") // active the asset
                 {
-                    try
-                    {
-                            mlm::MlmSyncClient client (AGENT_FTY_ASSET, AGENT_ASSET_ACTIVATOR);
-                            fty::AssetActivator activationAccessor (client);
-                            std::string asset_json = getJsonAsset (NULL, m.id);
-                            activationAccessor.activate (asset_json);
-                    }
-                    catch (const std::exception &e)
-                    {
-                        warningMessages += std::string(TRANSLATE_ME("Element '%s' is updated but a licensing error occured: %s", id_str.c_str(), e.what()));
+                    try {
+                        mlm::MlmSyncClient  client(AGENT_FTY_ASSET, AGENT_ASSET_ACTIVATOR);
+                        fty::AssetActivator activationAccessor(client);
+                        std::string         asset_json = getJsonAsset(NULL, m.id);
+                        activationAccessor.activate(asset_json);
+                    } catch (const std::exception& e) {
+                        warningMessages += TRANSLATE_ME(
+                            "Element '%s' is updated but a licensing error occured: %s", id_str.c_str(), e.what());
                     }
                 }
-            }
-            else
-            {
+            } else {
                 tntdb::Transaction trans(conn);
-                auto ret = update_device
-                    (conn, trans, m.id, iname.c_str(), type_id, parent_id,
-                     extattributes, status.c_str(), priority, groups, links, asset_tag, errmsg, extattributesRO);
-                if ( ( ret ) || ( !errmsg.empty() ) ) {
+                auto               ret = update_device(
+                    conn, trans, m.id, iname.c_str(), uint16_t(type_id), parent_id, extattributes, status.c_str(),
+                    uint16_t(priority), groups, links, asset_tag, errmsg, extattributesRO);
+                if ((ret) || (!errmsg.empty())) {
                     throw std::invalid_argument(errmsg);
                 }
             }
         }
-    }
-    else
-    {
-            _scoped_zhash_t *extattributesRO = zhash_new();
-            zhash_autofree(extattributesRO);
-            if(cm.getCreateMode() != 0)
-                zhash_insert(extattributesRO, "create_mode", (void*) std::to_string(cm.getCreateMode()).c_str());
-            if(cm.getCreateUser() != "")
-                zhash_insert(extattributesRO, "create_user", (void*) cm.getCreateUser().c_str());
-        if ( type != "device" )
-        {
+    } else {
+        _scoped_zhash_t* extattributesRO = zhash_new();
+        zhash_autofree(extattributesRO);
+        if (cm.getCreateMode() != 0)
+            zhash_insert(extattributesRO, "create_mode", const_cast<char*>(std::to_string(cm.getCreateMode()).c_str()));
+        if (cm.getCreateUser() != "")
+            zhash_insert(extattributesRO, "create_user", const_cast<char*>(cm.getCreateUser().c_str()));
+        if (type != "device") {
             // this is a transaction
-            auto ret = insert_dc_room_row_rack_group
-                (conn, ename.c_str(), type_id, parent_id,
-                 extattributes, status.c_str(), priority, groups, asset_tag, extattributesRO);
-            if ( ret.status != 1 ) {
+            auto ret = insert_dc_room_row_rack_group(
+                conn, ename.c_str(), uint16_t(type_id), parent_id, extattributes, status.c_str(), uint16_t(priority),
+                groups, asset_tag, extattributesRO);
+            if (ret.status != 1) {
                 throw BiosError(ret.rowid, ret.msg);
             }
-            m.id = ret.rowid;
-        }
-        else
-        {
-            if (subtype_id != rack_controller_id)
-            {
+            m.id = uint32_t(ret.rowid);
+        } else {
+            if (subtype_id != rack_controller_id) {
                 std::string requestedStatus = status;
 
-                if(status == "active")
-                {
+                if (status == "active") {
                     status = "nonactive";
                 }
 
-                //update the assert into the database
+                // update the assert into the database
                 {
                     tntdb::Transaction trans(conn);
                     // this is a transaction
-                    auto ret = insert_device (conn, trans, links, groups, ename.c_str(),
-                            parent_id, extattributes, subtype_id, subtype.c_str(), status.c_str(),
-                            priority, asset_tag, extattributesRO);
-                    if ( ret.status != 1 ) {
+                    auto ret = insert_device(
+                        conn, trans, links, groups, ename.c_str(), parent_id, extattributes, uint16_t(subtype_id),
+                        subtype.c_str(), status.c_str(), uint16_t(priority), asset_tag, extattributesRO);
+                    if (ret.status != 1) {
                         throw BiosError(ret.rowid, ret.msg);
                     }
-                    m.id = ret.rowid;
+                    m.id = uint32_t(ret.rowid);
                 }
 
-                if (requestedStatus == "active")
-                {
-                    //try to activate the device
-                     try
-                     {
-                         std::string asset_json = getJsonAsset (NULL, m.id);
-                         mlm::MlmSyncClient client (AGENT_FTY_ASSET, AGENT_ASSET_ACTIVATOR);
-                         fty::AssetActivator activationAccessor (client);
-                         activationAccessor.activate (asset_json);
-                     }
-                     catch (const std::exception &e)
-                     {
-                        warningMessages += std::string(TRANSLATE_ME("Element '%s' is updated but a licensing error occured: %s", id_str.c_str(), e.what()));
-                     }
-
+                if (requestedStatus == "active") {
+                    // try to activate the device
+                    try {
+                        std::string         asset_json = getJsonAsset(NULL, m.id);
+                        mlm::MlmSyncClient  client(AGENT_FTY_ASSET, AGENT_ASSET_ACTIVATOR);
+                        fty::AssetActivator activationAccessor(client);
+                        activationAccessor.activate(asset_json);
+                    } catch (const std::exception& e) {
+                        warningMessages += TRANSLATE_ME(
+                            "Element '%s' is updated but a licensing error occured: %s", id_str.c_str(), e.what());
+                    }
                 }
-            }
-            else
-            {
+            } else {
                 // this is a transaction
                 tntdb::Transaction trans(conn);
-                auto ret = insert_device (conn, trans, links, groups, ename.c_str(),
-                        parent_id, extattributes, subtype_id, subtype.c_str(), status.c_str(),
-                        priority, asset_tag, extattributesRO);
-                if ( ret.status != 1 ) {
+                auto               ret = insert_device(
+                    conn, trans, links, groups, ename.c_str(), parent_id, extattributes, uint16_t(subtype_id),
+                    subtype.c_str(), status.c_str(), uint16_t(priority), asset_tag, extattributesRO);
+                if (ret.status != 1) {
                     throw BiosError(ret.rowid, ret.msg);
                 }
-                m.id = ret.rowid;
+                m.id = uint32_t(ret.rowid);
             }
         }
     }
 
-    rv = DBAssets::extname_to_asset_name (ename, m.name);
+    rv = DBAssets::extname_to_asset_name(ename, m.name);
     if (rv != 0) {
-        std::string err = TRANSLATE_ME ("Database failure");
-        bios_throw("internal-error", err.c_str ());
+        std::string err = TRANSLATE_ME("Database failure");
+        bios_throw("internal-error", err.c_str());
     }
 
-    m.status = status;
-    m.parent_id = parent_id;
-    m.priority = priority;
-    m.type_id = type_id;
-    m.subtype_id = subtype_id;
-    m.asset_tag = asset_tag;
+    m.status     = status;
+    m.parent_id  = parent_id;
+    m.priority   = uint16_t(priority);
+    m.type_id    = uint16_t(type_id);
+    m.subtype_id = uint16_t(subtype_id);
+    m.asset_tag  = asset_tag;
 
-    for (void* it = zhash_first (extattributes); it != NULL;
-               it = zhash_next (extattributes)) {
-        m.ext.emplace (zhash_cursor (extattributes), (char*) it);
+    for (void* it = zhash_first(extattributes); it != NULL; it = zhash_next(extattributes)) {
+        m.ext.emplace(zhash_cursor(extattributes), static_cast<const char*>(it));
     }
 
-    if ( !id_str.empty() ) {
-        ids.insert(id);
+    if (!id_str.empty()) {
+        ids.insert(uint32_t(id));
     }
 
     LOG_END;
-    return std::make_pair(m, operation) ;
+    return std::make_pair(m, operation);
 }
 
 
@@ -1414,14 +1335,9 @@ static std::pair<db_a_elmnt_t, persist::asset_operation>
  *
  * \return emtpy string if everything is ok, otherwise the name of missing row
  */
-//MVY: moved out to support friendly error messages below
-static std::vector<std::string> MANDATORY = {
-    "name", "type", "sub_type", "location", "status",
-    "priority"
-};
-static std::string
-mandatory_missing
-        (const CsvMap &cm)
+// MVY: moved out to support friendly error messages below
+static std::vector<std::string> MANDATORY = {"name", "type", "sub_type", "location", "status", "priority"};
+static std::string              mandatory_missing(const CsvMap& cm)
 {
     auto all_fields = cm.getTitles();
     for (const auto& s : MANDATORY) {
@@ -1432,22 +1348,20 @@ mandatory_missing
     return "";
 }
 
-void
-    load_asset_csv
-        (std::istream& input,
-         std::vector <std::pair<db_a_elmnt_t,persist::asset_operation>> &okRows,
-         std::map <int, std::string> &failRows,
-         touch_cb_t touch_fn,
-         std::string user
-         )
+void load_asset_csv(
+    std::istream&                                                   input,
+    std::vector<std::pair<db_a_elmnt_t, persist::asset_operation>>& okRows,
+    std::map<int, std::string>&                                     failRows,
+    touch_cb_t                                                      touch_fn,
+    std::string                                                     user)
 {
     LOG_START;
 
-    std::vector <std::vector<cxxtools::String> > data;
-    cxxtools::CsvDeserializer deserializer(input);
-    char delimiter = findDelimiter(input);
+    std::vector<std::vector<std::string>> data;
+    cxxtools::CsvDeserializer             deserializer(input);
+    char                                  delimiter = findDelimiter(input);
     if (delimiter == '\x0') {
-        std::string msg{TRANSLATE_ME ("Cannot detect the delimiter, use comma (,) semicolon (;) or tabulator")};
+        std::string msg{TRANSLATE_ME("Cannot detect the delimiter, use comma (,) semicolon (;) or tabulator")};
         log_error("%s", msg.c_str());
         LOG_END;
         bios_throw("bad-request-document", msg.c_str());
@@ -1463,22 +1377,19 @@ void
     cm.setCreateUser(user);
     cm.setUpdateUser(user);
     std::time_t timestamp = std::time(NULL);
-    char mbstr[100];
-    if (std::strftime(mbstr, sizeof (mbstr), "%FT%T%z", std::localtime(&timestamp))) {
+    char        mbstr[100];
+    if (std::strftime(mbstr, sizeof(mbstr), "%FT%T%z", std::localtime(&timestamp))) {
         cm.setUpdateTs(std::string(mbstr));
     }
     return load_asset_csv(cm, okRows, failRows, touch_fn);
 }
 
-std::pair<db_a_elmnt_t, persist::asset_operation>
-    process_one_asset
-        (const CsvMap& cm)
+std::pair<db_a_elmnt_t, persist::asset_operation> process_one_asset(const CsvMap& cm)
 {
     LOG_START;
 
     auto m = mandatory_missing(cm);
-    if ( m != "" )
-    {
+    if (m != "") {
         std::string msg{"column '" + m + "' is missing, import is aborted"};
         log_error("%s", msg.c_str());
         LOG_END;
@@ -1486,28 +1397,26 @@ std::pair<db_a_elmnt_t, persist::asset_operation>
     }
 
     tntdb::Connection conn;
-    std::string msg{"No connection to database"};
-    try{
+    std::string       msg{"No connection to database"};
+    try {
         conn = tntdb::connect(DBConn::url);
-    }
-    catch(...)
-    {
+    } catch (...) {
         log_error("%s", msg.c_str());
         LOG_END;
         bios_throw("internal-error", msg.c_str());
     }
 
-    auto TYPES = read_element_types (conn);
-    if (TYPES.empty ())
+    auto TYPES = read_element_types(conn);
+    if (TYPES.empty())
         bios_throw("internal-error", msg.c_str());
 
-    auto SUBTYPES = read_device_types (conn);
-    if (SUBTYPES.empty ())
+    auto SUBTYPES = read_device_types(conn);
+    if (SUBTYPES.empty())
         bios_throw("internal-error", msg.c_str());
 
     std::set<a_elmnt_id_t> ids{};
-    int rc_0 = -1;
-    auto unused_columns = cm.getTitles();
+    int                    rc_0           = -1;
+    auto                   unused_columns = cm.getTitles();
     if (unused_columns.empty()) {
         bios_throw("bad-request-document", "Cannot import empty document.");
     }
@@ -1522,51 +1431,46 @@ std::pair<db_a_elmnt_t, persist::asset_operation>
     LIMITATIONS_STRUCT limitations;
     get_licensing_limitation(limitations);
     std::string warningMessage;
-    auto ret = process_row(conn, cm, 1, TYPES, SUBTYPES, ids, true, rc_0, limitations, warningMessage);
+    auto        ret = process_row(conn, cm, 1, TYPES, SUBTYPES, ids, true, size_t(rc_0), limitations, warningMessage);
     LOG_END;
     return ret;
 }
 
-void
-    load_asset_csv
-        (const CsvMap& cm,
-         std::vector <std::pair<db_a_elmnt_t,persist::asset_operation>> &okRows,
-         std::map <int, std::string> &failRows,
-         touch_cb_t touch_fn
-         )
+void load_asset_csv(
+    const CsvMap&                                                   cm,
+    std::vector<std::pair<db_a_elmnt_t, persist::asset_operation>>& okRows,
+    std::map<int, std::string>&                                     failRows,
+    touch_cb_t                                                      touch_fn)
 {
     LOG_START;
 
     auto m = mandatory_missing(cm);
-    if ( m != "" )
-    {
+    if (m != "") {
         std::string msg{"column '" + m + "' is missing, import is aborted"};
         log_error("%s", msg.c_str());
         LOG_END;
-        std::string msg_received = TRANSLATE_ME ("<missing column '%s'>", m.c_str ());
-        std::string msg_expected = TRANSLATE_ME ("<column '%s' is present in csv>", m.c_str ());
+        std::string msg_received = TRANSLATE_ME("<missing column '%s'>", m.c_str());
+        std::string msg_expected = TRANSLATE_ME("<column '%s' is present in csv>", m.c_str());
         bios_throw("request-param-bad", m.c_str(), msg_received.c_str(), msg_expected.c_str());
     }
 
     tntdb::Connection conn;
-    std::string msg{TRANSLATE_ME ("No connection to database")};
-    try{
+    std::string       msg{TRANSLATE_ME("No connection to database")};
+    try {
         conn = tntdb::connect(DBConn::url);
-    }
-    catch(...)
-    {
+    } catch (...) {
         log_error("%s", msg.c_str());
         LOG_END;
         bios_throw("internal-error", msg.c_str());
     }
 
-    auto TYPES = read_element_types (conn);
+    auto TYPES = read_element_types(conn);
 
-    if (TYPES.empty ())
+    if (TYPES.empty())
         bios_throw("internal-error", msg.c_str());
 
-    auto SUBTYPES = read_device_types (conn);
-    if (SUBTYPES.empty ())
+    auto SUBTYPES = read_device_types(conn);
+    if (SUBTYPES.empty())
         bios_throw("internal-error", msg.c_str());
 
     // BIOS-2506
@@ -1577,39 +1481,36 @@ void
     // rc0 promotion disabled due to multiple datacenter support
     // - hard to decide whether it's import of DC after crash or another DC, RC location must be set manually
     size_t rc0 = std::numeric_limits<std::size_t>::max();
-    //int rc0 = promote_rc0(&client, cm, touch_fn);
+    // int rc0 = promote_rc0(&client, cm, touch_fn);
     // get licensing limitation, if any
     LIMITATIONS_STRUCT limitations;
     get_licensing_limitation(limitations);
 
     std::set<size_t> processedRows;
-    bool somethingProcessed;
+    bool             somethingProcessed;
     do {
         somethingProcessed = false;
-        failRows.clear ();
+        failRows.clear();
         for (size_t row_i = 1; row_i != cm.rows(); ++row_i) {
-            if (processedRows.find (row_i) != processedRows.end ()) continue;
-            try{
+            if (processedRows.find(row_i) != processedRows.end())
+                continue;
+            try {
                 std::string warningMessages;
                 auto ret = process_row(conn, cm, row_i, TYPES, SUBTYPES, ids, true, rc0, limitations, warningMessages);
-                touch_fn ();
-                if(warningMessages.empty())
-                {
-                    okRows.push_back (ret);
-                    log_info ("row %zu was imported successfully", row_i);
-                }
-                else
-                {
+                touch_fn();
+                if (warningMessages.empty()) {
+                    okRows.push_back(ret);
+                    log_info("row %zu was imported successfully", row_i);
+                } else {
                     failRows.insert(std::make_pair(row_i + 1, warningMessages));
-                    log_error ("row %zu imported with issue: %s", row_i, warningMessages.c_str());
+                    log_error("row %zu imported with issue: %s", row_i, warningMessages.c_str());
                 }
-                
+
                 somethingProcessed = true;
-                processedRows.insert (row_i);
-            }
-            catch (const std::invalid_argument &e) {
+                processedRows.insert(row_i);
+            } catch (const std::invalid_argument& e) {
                 failRows.insert(std::make_pair(row_i + 1, e.what()));
-                log_error ("row %zu not imported: %s", row_i, e.what());
+                log_error("row %zu not imported: %s", row_i, e.what());
             }
         }
     } while (somethingProcessed);

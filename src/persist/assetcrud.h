@@ -18,80 +18,46 @@
  *
  */
 
-/*! \file   assecrud.h
-    \brief  Basic functions for assets
-    \author Alena Chernikava <AlenaChernikava@Eaton.com>
-*/
+/// @file   assecrud.h
+/// @brief  Basic functions for assets
+/// @author Alena Chernikava <AlenaChernikava@Eaton.com>
+#pragma once
 
-#ifndef SRC_PERSIST_ASSETCRUD_H_
-#define SRC_PERSIST_ASSETCRUD_H_
-
-#include <tntdb/connect.h>
-
-#include "dbtypes.h"
 #include "db/dbhelpers.h"
+#include "dbtypes.h"
 #include <fty_common_db_asset.h>
+#include <tntdb/connect.h>
 
 // ===============================================================
 // Helper functions for direct interacting with database
 // ===============================================================
 
-
-std::set <a_elmnt_id_t> select_asset_group_elements (tntdb::Connection &conn, a_elmnt_id_t group_id);
-
-
-zlist_t* select_asset_device_links_all(tntdb::Connection &conn,
-                a_elmnt_id_t device_id, a_lnk_tp_id_t link_type_id);
-
-db_reply <db_a_elmnt_t>
-    select_asset_element_by_name
-        (tntdb::Connection &conn,
-         const char *element_name);
-
+std::set<a_elmnt_id_t> select_asset_group_elements(tntdb::Connection& conn, a_elmnt_id_t group_id);
+zlist_t* select_asset_device_links_all(tntdb::Connection& conn, a_elmnt_id_t device_id, a_lnk_tp_id_t link_type_id);
+db_reply<db_a_elmnt_t> select_asset_element_by_name(tntdb::Connection& conn, const char* element_name);
 
 // dictionaries
 
-/**
- * \brief Reads from database all available element types.
- *
- * Reads from the table t_bios_asset_element_type;
- *
- * \param[in] conn - the connection to database.
- *
- * \return a database reply where item is a map of names at the ids.
- *         In case of any erorrs item would be empty.
- */
-db_reply < std::map <std::string, int> >
-    get_dictionary_element_type
-        (tntdb::Connection &conn);
+/// Reads from database all available element types.
+///
+/// Reads from the table t_bios_asset_element_type;
+///
+/// @param[in] conn - the connection to database.
+/// @return a database reply where item is a map of names at the ids. In case of any erorrs item would be empty.
+db_reply<std::map<std::string, int>> get_dictionary_element_type(tntdb::Connection& conn);
 
 
-/**
- * \brief Reads from database all available device types.
- *
- * Reads from the table t_bios_asset_device_type;
- *
- * \param[in] conn - the connection to database.
- *
- * \return a database reply where item is a map of names at the ids.
- *         In case of any erorrs item would be empty.
- */
-db_reply < std::map <std::string, int> >
-    get_dictionary_device_type
-        (tntdb::Connection &conn);
+/// Reads from database all available device types.
+///
+/// Reads from the table t_bios_asset_device_type;
+///
+/// @param[in] conn - the connection to database.
+///
+/// @return a database reply where item is a map of names at the ids. In case of any erorrs item would be empty.
+db_reply<std::map<std::string, int>> get_dictionary_device_type(tntdb::Connection& conn);
 
-db_reply <std::vector<db_a_elmnt_t>>
-    select_asset_elements_by_type
-        (tntdb::Connection &conn,
-         a_elmnt_tp_id_t type_id);
+db_reply<std::vector<db_a_elmnt_t>> select_asset_elements_by_type(tntdb::Connection& conn, a_elmnt_tp_id_t type_id);
 
-/**
- * \brief Selects all links, where at least one end is inside the container
- */
-db_reply <std::set <std::pair<a_elmnt_id_t ,a_elmnt_id_t>>>
-    select_links_by_container
-        (tntdb::Connection &conn,
-         a_elmnt_id_t element_id);
-
-
-#endif // SRC_PERSIST_ASSETCRUD_H_
+/// Selects all links, where at least one end is inside the container
+db_reply<std::set<std::pair<a_elmnt_id_t, a_elmnt_id_t>>> select_links_by_container(
+    tntdb::Connection& conn, a_elmnt_id_t element_id);

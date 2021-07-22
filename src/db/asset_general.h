@@ -23,99 +23,84 @@
     \author Alena Chernikava <AlenaChernikava@eaton.com>
 */
 
-#ifndef SRC_DB_ASSETS_GENERAL_H
-#define SRC_DB_ASSETS_GENERAL_H
+#pragma once
 
-#include <tntdb/connect.h>
 #include "db/dbhelpers.h"
+#include <fty_common_db_defs.h>
+#include <tntdb.h>
 
 #define RC0_INAME "rackcontroller-0"
 
 namespace persist {
 
-int
-    update_dc_room_row_rack_group
-        (tntdb::Connection  &conn,
-         a_elmnt_id_t     element_id,
-         const char      *element_name,
-         a_elmnt_tp_id_t  element_type_id,
-         a_elmnt_id_t     parent_id,
-         zhash_t         *extattributes,
-         const char      *status,
-         a_elmnt_pr_t     priority,
-         std::set <a_elmnt_id_t> const &groups,
-         const std::string &asset_tag,
-         std::string     &errmsg,
-         zhash_t      *extattributesRO = NULL);
+int update_dc_room_row_rack_group(
+    tntdb::Connection&            conn,
+    a_elmnt_id_t                  element_id,
+    const char*                   element_name,
+    a_elmnt_tp_id_t               element_type_id,
+    a_elmnt_id_t                  parent_id,
+    zhash_t*                      extattributes,
+    const char*                   status,
+    a_elmnt_pr_t                  priority,
+    std::set<a_elmnt_id_t> const& groups,
+    const std::string&            asset_tag,
+    std::string&                  errmsg,
+    zhash_t*                      extattributesRO = NULL);
 
 
-int
-    update_device
-        (tntdb::Connection  &conn,
-         tntdb::Transaction &trans,
-         a_elmnt_id_t     element_id,
-         const char      *element_name,
-         a_elmnt_tp_id_t  element_type_id,
-         a_elmnt_id_t     parent_id,
-         zhash_t         *extattributes,
-         const char      *status,
-         a_elmnt_pr_t     priority,
-         std::set <a_elmnt_id_t> const &groups,
-         std::vector <link_t> &links,
-         const std::string &asset_tag,
-         std::string     &errmsg,
-         zhash_t      *extattributesRO = NULL);
+int update_device(
+    tntdb::Connection&            conn,
+    tntdb::Transaction&           trans,
+    a_elmnt_id_t                  element_id,
+    const char*                   element_name,
+    a_elmnt_tp_id_t               element_type_id,
+    a_elmnt_id_t                  parent_id,
+    zhash_t*                      extattributes,
+    const char*                   status,
+    a_elmnt_pr_t                  priority,
+    std::set<a_elmnt_id_t> const& groups,
+    std::vector<link_t>&          links,
+    const std::string&            asset_tag,
+    std::string&                  errmsg,
+    zhash_t*                      extattributesRO = NULL);
 
 
-db_reply_t
-    insert_dc_room_row_rack_group
-        (tntdb::Connection  &conn,
-         const char      *element_name,
-         a_elmnt_tp_id_t  element_type_id,
-         a_elmnt_id_t     parent_id,
-         zhash_t         *extattributes,
-         const char      *status,
-         a_elmnt_pr_t     priority,
-         std::set <a_elmnt_id_t> const &groups,
-         const std::string &asset_tag,
-         zhash_t      *extattributesRO = NULL);
+db_reply_t insert_dc_room_row_rack_group(
+    tntdb::Connection&            conn,
+    const char*                   element_name,
+    a_elmnt_tp_id_t               element_type_id,
+    a_elmnt_id_t                  parent_id,
+    zhash_t*                      extattributes,
+    const char*                   status,
+    a_elmnt_pr_t                  priority,
+    std::set<a_elmnt_id_t> const& groups,
+    const std::string&            asset_tag,
+    zhash_t*                      extattributesRO = NULL);
 
 
-db_reply_t
-    insert_device
-       (tntdb::Connection &conn,
-         tntdb::Transaction &trans,
-        std::vector <link_t> &links,
-        std::set <a_elmnt_id_t> const &groups,
-        const char    *element_name,
-        a_elmnt_id_t   parent_id,
-        zhash_t       *extattributes,
-        a_dvc_tp_id_t  asset_device_type_id,
-        const char    *asset_device_type_name,
-        const char    *status,
-        a_elmnt_pr_t   priority,
-        const std::string &asset_tag,
-        zhash_t      *extattributesRO = NULL);
+db_reply_t insert_device(
+    tntdb::Connection&            conn,
+    tntdb::Transaction&           trans,
+    std::vector<link_t>&          links,
+    std::set<a_elmnt_id_t> const& groups,
+    const char*                   element_name,
+    a_elmnt_id_t                  parent_id,
+    zhash_t*                      extattributes,
+    a_dvc_tp_id_t                 asset_device_type_id,
+    const char*                   asset_device_type_name,
+    const char*                   status,
+    a_elmnt_pr_t                  priority,
+    const std::string&            asset_tag,
+    zhash_t*                      extattributesRO = NULL);
 
 
-db_reply_t
-    delete_dc_room_row_rack
-        (tntdb::Connection &conn,
-        a_elmnt_id_t element_id);
+db_reply_t delete_dc_room_row_rack(tntdb::Connection& conn, a_elmnt_id_t element_id);
 
 
-db_reply_t
-    delete_group
-        (tntdb::Connection &conn,
-         a_elmnt_id_t element_id);
+db_reply_t delete_group(tntdb::Connection& conn, a_elmnt_id_t element_id);
 
 
-db_reply_t
-    delete_device
-        (tntdb::Connection &conn,
-         a_elmnt_id_t element_id,
-         const std::string &asset_json="");
+db_reply_t delete_device(tntdb::Connection& conn, a_elmnt_id_t element_id, const std::string& asset_json = "");
 
 
-}   // end namespace
-#endif // SRC_DB_ASSETS_GENERAL_H
+} // namespace persist

@@ -1,0 +1,359 @@
+<#
+ #
+ # Copyright (C) 2016 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ * \file    conf_scan.ecpp
+ * \author  Lilian Barraud <LilianBarraud@Eaton.com>
+ * \brief   This call push and get a scan configuration for discovery.
+ */
+ #><%pre>
+#include <string>
+#include <fty_common_macros.h>
+#include <fty_common_mlm_pool.h>
+#include <fty_common_rest_helpers.h>
+#include <cxxtools/jsondeserializer.h>
+#include <fty_common_rest_audit_log.h>
+
+static zmsg_t *
+req_setconf (zuuid_t *uuid, std::string json)
+{
+    zmsg_t *msg = zmsg_new ();
+    zmsg_addstr (msg, "SETCONFIG");
+    zmsg_addstr (msg, zuuid_str_canonical (uuid));
+    //parsing json file
+    try {
+
+        std::stringstream input (json);
+        cxxtools::JsonDeserializer deserializer (input);
+        cxxtools::SerializationInfo request_doc;
+        deserializer.deserialize (request_doc);
+
+        std::string scanType;
+        if (!request_doc.getMember ("scan_type", scanType)) {
+            //ERROR
+            zmsg_destroy (&msg);
+            return NULL;
+        }
+
+        zmsg_addstr (msg, scanType.c_str ());;
+
+        cxxtools::SerializationInfo *si_rangescan = request_doc.findMember ("multiscan");
+        if (si_rangescan == NULL) {
+            //ERROR
+            zmsg_destroy (&msg);
+            return NULL;
+        }
+
+        cxxtools::SerializationInfo *list_subnet = si_rangescan->findMember ("subnet");
+        if (list_subnet == NULL) {
+            //ERROR
+            zmsg_destroy (&msg);
+            return NULL;
+        }
+
+        cxxtools::SerializationInfo *list_fromto = si_rangescan->findMember ("from_to");
+        if (list_fromto == NULL) {
+            //ERROR
+            zmsg_destroy (&msg);
+            return NULL;
+        }
+
+        int val =0;
+        for (auto it = list_subnet->begin (); it != list_subnet->end (); ++it) {
+            val++;
+        }
+        for (auto it = list_fromto->begin (); it != list_fromto->end (); ++it) {
+            val++;
+        }
+
+        zmsg_addstrf (msg, "%" PRIi32, val);
+
+        log_debug ("set_confscan: %i different scans", val);
+
+        std::string value_sn;
+        for (auto it = list_subnet->begin (); it != list_subnet->end (); ++it) {
+            it->getValue (value_sn);
+            zmsg_addstr (msg, value_sn.c_str ());
+        }
+        for (auto it = list_fromto->begin (); it != list_fromto->end (); ++it) {
+            it->getValue (value_sn);
+            zmsg_addstr (msg, value_sn.c_str ());
+        }
+
+        cxxtools::SerializationInfo *listIp = request_doc.findMember ("ips");
+        if (listIp == NULL) {
+            //ERROR
+            zmsg_destroy (&msg);
+            return NULL;
+        }
+
+        val = 0;
+        for (auto it = listIp->begin (); it != listIp->end (); ++it) {
+            val++;
+        }
+
+        zmsg_addstrf (msg, "%" PRIi32, val);
+
+        log_debug ("set_confscan: %i different IPs", val);
+
+        for (auto it = listIp->begin (); it != listIp->end (); ++it) {
+            it->getValue (value_sn);
+            zmsg_addstr (msg, value_sn.c_str ());
+        }
+
+    }
+    catch (const std::exception& e) {
+        return NULL;
+    }
+
+    return msg;
+}
+
+
+int
+set_confscan (std::string json)
+{
+     // connect to mlm client
+    auto client = mlm_pool.get();
+    if (!client) {
+        log_fatal ("set_confscan: mlm_pool.get () failed.");
+        return -1;
+    }
+
+    zuuid_t *uuid = zuuid_new ();
+    zmsg_t *request = req_setconf (uuid, json);
+    if (request == NULL) {
+        zuuid_destroy (&uuid);
+        return -8;
+    }
+
+    int rv = client->sendto ("fty-discovery", "setconf", 1000, &request);
+
+    if (rv == -1) {
+        zuuid_destroy (&uuid);
+        log_fatal ("set_confscan: client->sendto (address = '%s') failed.", "fty-discovery");
+        return -2;
+    }
+
+    zmsg_t *resp = client->recv (zuuid_str_canonical (uuid), 5);
+    zuuid_destroy (&uuid);
+    if (!resp) {
+        log_fatal ("set_confscan: client->recv (timeout = '5') returned NULL");
+        return -3;
+    }
+    char *result = zmsg_popstr (resp);
+    if (result) {
+        if (streq (result, "OK")) {
+                zstr_free (&result);
+                return 0;
+            }
+        else if (streq (result, "ERROR")) {
+            zstr_free (&result);
+            return -8;
+        }
+        else if (streq (result, "STOPPING")) {
+            zstr_free (&result);
+            return -6;
+        }
+        else if (streq (result, "RUNNING")) {
+            zstr_free (&result);
+            return -7;
+        }
+        else {
+            zstr_free (&result);
+            return -5;
+        }
+    }
+    else
+        return -5;
+    zstr_free (&result);
+    zmsg_destroy (&resp);
+    return 0;
+}
+
+// confscan request
+static zmsg_t *
+req_getconfscan (zuuid_t *uuid)
+{
+    zmsg_t *msg = zmsg_new ();
+    zmsg_addstr (msg, "GETCONFIG");
+    zmsg_addstr (msg, zuuid_str_canonical (uuid));
+    return msg;
+}
+
+int
+get_confscan (std::string &output)
+{
+    output.clear ();
+
+    // connect to mlm client
+    auto client = mlm_pool.get();
+    if (!client)
+    {
+        log_fatal ("get_confscan: mlm_pool.get () failed.");
+        return -1;
+    }
+
+    zuuid_t *uuid = zuuid_new ();
+    zmsg_t *request = req_getconfscan (uuid);
+    int rv = client->sendto ("fty-discovery", "getconf", 1000, &request);
+
+    if (rv == -1)
+    {
+        zuuid_destroy (&uuid);
+        log_fatal ("get_confscan: client->sendto (address = '%s') failed.", "fty-discovery");
+        return -2;
+    }
+
+    zmsg_t *resp = client->recv (zuuid_str_canonical (uuid), 5);
+    zuuid_destroy (&uuid);
+    if (!resp)
+    {
+        log_fatal ("info: client->recv (timeout = '5') returned NULL");
+        return -3;
+    }
+
+    char *result = zmsg_popstr (resp);
+    if (result) {
+        if (streq (result, "OK")) {
+            zstr_free (&result);
+            char *json_res = zmsg_popstr (resp);
+            if (!json_res) return -5;
+            output.append (json_res);
+            zstr_free (&json_res);
+        }
+        else if (streq (result, "ERROR")) {
+            zstr_free (&result);
+            return -4;
+        }
+        else {
+            zstr_free (&result);
+            return -5;
+        }
+    }
+    else
+        return -5;
+
+    zmsg_destroy (&resp);
+    return 0;
+}
+
+</%pre>
+<%request scope="global">
+UserInfo user;
+</%request>
+<%cpp>
+    // permission check
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Anonymous, "R"},
+            {BiosProfile::Dashboard, "R"},
+            {BiosProfile::Admin,     "CR"}
+            };
+    std::string audit_msg;
+    if (request.getMethod () == "POST") {
+        audit_msg = std::string ("Request CREATE conf_scan FAILED");
+    }
+    CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.empty () ? nullptr : audit_msg.c_str ());
+
+    int rv = 0;
+    std::string output;
+    if (request.getMethod () == "GET") {
+        rv = get_confscan (output);
+    }
+    else if (request.getMethod () == "POST") {
+        std::string json = request.getBody ();
+        if (!json.empty ())
+            rv = set_confscan (json);
+    }
+    else
+        http_die ("method-not-allowed", request.getMethod ().c_str () );
+
+    if (rv == -1) {
+        std::string err = TRANSLATE_ME ("mlmpool.get () failed.");
+        if (request.getMethod () == "POST") {
+            log_error_audit ("Request CREATE conf_scan FAILED");
+        }
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -2) {
+        std::string err = TRANSLATE_ME ("client->sendto () failed.");
+        if (request.getMethod () == "POST") {
+            log_error_audit ("Request CREATE conf_scan FAILED");
+        }
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -3) {
+        std::string err = TRANSLATE_ME ("client->recv () failed.");
+        if (request.getMethod () == "POST") {
+            log_error_audit ("Request CREATE conf_scan FAILED");
+        }
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -4) {
+        std::string err = TRANSLATE_ME ("<range>");
+        if (request.getMethod () == "POST") {
+            log_error_audit ("Request CREATE conf_scan FAILED");
+        }
+        http_die ("request-param-required", err.c_str ());
+    }
+    else
+    if (rv == -5) {
+        std::string err = TRANSLATE_ME ("fty-discovery returned malformed or unexpected message.");
+        if (request.getMethod () == "POST") {
+            log_error_audit ("Request CREATE conf_scan FAILED");
+        }
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -6) {
+        std::string err = TRANSLATE_ME ("fty-discovery precedent scan currently stopping.");
+        if (request.getMethod () == "POST") {
+            log_error_audit ("Request CREATE conf_scan FAILED");
+        }
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -7) {
+        std::string err = TRANSLATE_ME ("fty-discovery already have a scan running.");
+        if (request.getMethod () == "POST") {
+            log_error_audit ("Request CREATE conf_scan FAILED");
+        }
+        http_die ("internal-error", err.c_str ());
+    }
+    else
+    if (rv == -8) {
+        std::string err = TRANSLATE_ME ("Please check RFC-11 for valid json schema description.");
+        if (request.getMethod () == "POST") {
+            log_error_audit ("Request CREATE conf_scan FAILED");
+        }
+        http_die ("bad-request-document", err.c_str ());
+    }
+    else
+    { // Proceed to output
+        if (request.getMethod () == "POST") {
+            log_info_audit ("Request CREATE conf_scan SUCCESS");
+        }
+</%cpp>
+<$$ output $>
+<%cpp>
+    }
+</%cpp>

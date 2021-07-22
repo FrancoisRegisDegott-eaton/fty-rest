@@ -39,7 +39,7 @@ s_get_devices_usize(
     std::function< void( const tntdb::Row& ) > sumarize = [&size]( const tntdb::Row& row ) {
         uint32_t tmp = string_to_uint32( row.getString("value").c_str() );
         if( tmp != UINT32_MAX ) {
-            size += tmp;
+            size += int(tmp);
         }
     };
 
@@ -139,14 +139,14 @@ rack_outlets_available(
         {
             a_elmnt_id_t device_subtype = 0;
             row["subtype_id"].get(device_subtype);
-            if (!persist::is_epdu(device_subtype) && !persist::is_pdu(device_subtype))
+            if (!persist::is_epdu(int(device_subtype)) && !persist::is_pdu(int(device_subtype)))
                 return;
 
             a_elmnt_id_t device_asset_id = 0;
             row["asset_id"].get(device_asset_id);
 
             uint32_t foo = s_select_outlet_count(conn, device_asset_id);
-            int outlet_count = foo != UINT32_MAX ? foo : -1;
+            int outlet_count = foo != UINT32_MAX ? int(foo) : -1;
 
             int outlet_used = DBAssets::count_of_link_src(conn, device_asset_id);
             if (outlet_used == -1)

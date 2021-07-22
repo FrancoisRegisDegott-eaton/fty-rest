@@ -24,27 +24,28 @@ Priority:       optional
 Maintainer:     fty-rest Developers <eatonipcopensource@eaton.com>
 Standards-Version: 4.0.1.0
 Build-Depends: debhelper (>= 9),
+    cmake (>=3.0),
+    fty-cmake-dev,
+    libfty-cmake-rest-dev,
+    libfty-utils-dev,
     pkg-config,
     libsodium-dev,
-    libzmq3-dev,
+    libmagic-dev,
     libczmq-dev (>= 3.0.2),
+    libmlm-dev,
     libcidr0-dev,
     libcxxtools-dev,
     libtntnet-dev,
     libtntdb-dev,
-    libmagic-dev,
     libfty-common-logging-dev,
     libfty-common-dev,
     libfty-common-db-dev,
     libfty-common-rest-dev,
     libfty-common-mlm-dev,
-    libsasl2-dev,
-    libmlm-dev,
-    libfty-proto-dev (>= 1.0.0),
-    libfty-shm-dev (>= 1.0.0),
-    libfty-asset-activator-dev,
     libfty-common-messagebus-dev,
     libfty-common-dto-dev,
+    libfty-proto-dev,
+    libfty-shm-dev,
     libfty-asset-activator-dev,
     asciidoc-base | asciidoc, xmlto,
     dh-autoreconf
@@ -54,36 +55,6 @@ Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: fty-rest shared library
  This package contains shared library for fty-rest:
- common core rest api for 42ity project
-
-Package: libfty-rest-dev
-Architecture: any
-Section: libdevel
-Depends:
-    ${misc:Depends},
-    libsodium-dev,
-    libzmq3-dev,
-    libczmq-dev (>= 3.0.2),
-    libcidr0-dev,
-    libcxxtools-dev,
-    libtntnet-dev,
-    libtntdb-dev,
-    libmagic-dev,
-    libfty-common-logging-dev,
-    libfty-common-dev,
-    libfty-common-db-dev,
-    libfty-common-rest-dev,
-    libfty-common-mlm-dev,
-    libsasl2-dev,
-    libmlm-dev,
-    libfty-proto-dev (>= 1.0.0),
-    libfty-shm-dev (>= 1.0.0),
-    libfty-asset-activator-dev,
-    libfty-common-messagebus-dev,
-    libfty-common-dto-dev,
-    libfty-rest1 (= ${binary:Version})
-Description: fty-rest development tools
- This package contains development files for fty-rest:
  common core rest api for 42ity project
 
 # Customization over zproject-generated code follows
@@ -111,17 +82,6 @@ Description: grouping of end-user solution with fty-rest
  This metapackage depends on actual packages needed to implement
  the core 42ity REST API with fty-rest for end-users of a product.
 
-Package: fty-rest-dbg
-Architecture: any
-Section: debug
-Priority: optional
-Depends:
-    fty-rest (= ${binary:Version}),
-    ${misc:Depends}
-Description: fty-rest debugging symbols
- This package contains the debugging symbols for fty-rest:
- common core rest api for 42ity project.
-
 # Customization over zproject-generated code follows:
 Package: fty-rest-scripts
 Architecture: any
@@ -139,6 +99,6 @@ Section: net
 Priority: optional
 Depends:
     libfty-rest1 (= ${binary:Version}),
-    ${misc:Depends}, ${shlibs:Depends}
+    ${misc:Depends}
 Description: binary programs using fty-rest elements
  This package contains binary programs that go along with fty-rest.

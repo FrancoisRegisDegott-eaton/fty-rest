@@ -23,54 +23,45 @@
     \author Michal Vyskocil <MichalVyskocil@Eaton.com>
 */
 
-#include <iostream>
+#include "dbtypes.h"
+#include "shared/data.h"
+#include "shared/utilspp.h"
 #include <algorithm>
-#include <vector>
-#include <functional>
-
 #include <cxxtools/csvserializer.h>
 #include <cxxtools/jsonserializer.h>
 #include <cxxtools/regex.h>
+#include <fty_common.h>
+#include <fty_common_db_asset.h>
+#include <fty_common_db_dbpath.h>
+#include <fty_common_macros.h>
+#include <functional>
+#include <iostream>
 #include <tntdb/row.h>
 #include <tntdb/transaction.h>
-
-#include <fty_common.h>
-#include <fty_common_macros.h>
-#include <fty_common_db_dbpath.h>
-#include <fty_common_db_asset.h>
-#include "dbtypes.h"
-#include "shared/utilspp.h"
-#include "shared/data.h"
+#include <vector>
 
 namespace persist {
 
 // names of element from v_web_asset_element - they'll be printed as the first ones
-static std::vector<std::string> ASSET_ELEMENT_KEYTAGS{
-    "id", "name", "type", "sub_type", "location", "status", "priority", "asset_tag"};
+static std::vector<std::string> ASSET_ELEMENT_KEYTAGS{"id",       "name",   "type",     "sub_type",
+                                                      "location", "status", "priority", "asset_tag"};
 
 // get all keytags available in the system and update the s argument
 // + remove the duplicate names from v_web_asset_element/t_bios_asset_element table
 //   so you can't export ext/name even if it's in the database
-static int
-s_update_keytags(
-        tntdb::Connection& conn,
-        const std::vector<std::string>& aek,
-        std::vector<std::string>& s) {
+static int s_update_keytags(tntdb::Connection& conn, const std::vector<std::string>& aek, std::vector<std::string>& s)
+{
 
-    std::function<void(const tntdb::Row&)> \
-        foo = [&s, &aek](const tntdb::Row& r)
-        {
-            std::string keytag;
-            r["keytag"].get(keytag);
-            if (std::find(aek.cbegin(), aek.cend(), keytag) != aek.end())
-                return;
-            if (std::find(s.cbegin(), s.cend(), keytag) == s.end())
-                s.push_back(keytag);
-        };
+    std::function<void(const tntdb::Row&)> foo = [&s, &aek](const tntdb::Row& r) {
+        std::string keytag;
+        r["keytag"].get(keytag);
+        if (std::find(aek.cbegin(), aek.cend(), keytag) != aek.end())
+            return;
+        if (std::find(s.cbegin(), s.cend(), keytag) == s.end())
+            s.push_back(keytag);
+    };
 
-    int rv = DBAssets::select_ext_rw_attributes_keytags(
-            conn,
-            foo);
+    int rv = DBAssets::select_ext_rw_attributes_keytags(conn, foo);
     return rv;
 }
 
@@ -79,76 +70,61 @@ s_update_keytags(
 //
 // at the same time I don't think this is general enough to be in src/db, so static functions here
 typedef std::vector<std::tuple<std::string, std::string, std::string>> power_links_t;
-static int
-s_power_links(
-        tntdb::Connection& conn,
-        a_elmnt_id_t id,
-        power_links_t& out)
+static int s_power_links(tntdb::Connection& conn, a_elmnt_id_t id, power_links_t& out)
 {
-    row_cb_f foo = \
-        [&out](const tntdb::Row& r)
-        {
-            std::string src_name{""};
-            std::string src_out{""};
-            std::string dest_in{""};
-            r["src_name"].get(src_name);
-            r["src_out"].get(src_out);
-            r["dest_in"].get(dest_in);
-            out.push_back(std::make_tuple(
-                src_name,
-                src_out,
-                dest_in
-            ));
-        };
-    return DBAssets::select_v_web_asset_power_link_src_byId(
-            conn,
-            id,
-            foo);
+    row_cb_f foo = [&out](const tntdb::Row& r) {
+        std::string src_name{""};
+        std::string src_out{""};
+        std::string dest_in{""};
+        r["src_name"].get(src_name);
+        r["src_out"].get(src_out);
+        r["dest_in"].get(dest_in);
+        out.push_back(std::make_tuple(src_name, src_out, dest_in));
+    };
+    return DBAssets::select_v_web_asset_power_link_src_byId(conn, id, foo);
 }
 
 // helper class to assist with serialization line by line
-class LineCsvSerializer {
-    public:
-        explicit LineCsvSerializer(std::ostream& out):
-            _cs{out, NULL},
-            _buf{}
-        {}
+class LineCsvSerializer
+{
+public:
+    explicit LineCsvSerializer(std::ostream& out)
+        : _cs{out, NULL}
+        , _buf{}
+    {
+    }
 
-        void add(const std::string& s) {
-            _buf.push_back(s);
-        }
+    void add(const std::string& s)
+    {
+        _buf.push_back(s);
+    }
 
-        void add(const uint32_t i) {
-            return add(std::to_string(i));
-        }
+    void add(const uint32_t i)
+    {
+        return add(std::to_string(i));
+    }
 
-        void serialize() {
-            std::vector<std::vector<std::string>> aux{};
-            aux.push_back(_buf);
-            _cs.serialize(aux);
-            _buf.clear();
-        }
+    void serialize()
+    {
+        std::vector<std::vector<std::string>> aux{};
+        aux.push_back(_buf);
+        _cs.serialize(aux);
+        _buf.clear();
+    }
 
-    protected:
-        cxxtools::CsvSerializer _cs;
-        std::vector<std::string> _buf;
+protected:
+    cxxtools::CsvSerializer  _cs;
+    std::vector<std::string> _buf;
 };
 
-void
-    export_asset_csv
-        (std::ostream& out,
-         int64_t dc_id,
-         bool generate_bom
-        )
+void export_asset_csv(std::ostream& out, int64_t dc_id, bool generate_bom)
 {
     // 0.) tntdb connection
     tntdb::Connection conn;
-    std::string msg{TRANSLATE_ME ("no connection to database")};
-    try{
+    std::string       msg{TRANSLATE_ME("no connection to database")};
+    try {
         conn = tntdb::connect(DBConn::url);
-    }
-    catch(...)
-    {
+    } catch (...) {
         log_error("%s", msg.c_str());
         LOG_END;
         throw std::runtime_error(msg.c_str());
@@ -161,18 +137,34 @@ void
     LineCsvSerializer lcs{out};
 
     // TODO: move somewhere else
-    std::vector<std::string> KEYTAGS = {
-        "description", "ip.1", "company", "site_name", "region", "country", "address",
-        "contact_name", "contact_email", "contact_phone", "u_size",
-        "manufacturer", "model", "serial_no", "runtime", "installation_date",
-        "maintenance_date", "maintenance_due",
-        "location_u_pos", "location_w_pos", "end_warranty_date", "hostname.1", "http_link.1"
-    };
+    std::vector<std::string> KEYTAGS = {"description",
+                                        "ip.1",
+                                        "company",
+                                        "site_name",
+                                        "region",
+                                        "country",
+                                        "address",
+                                        "contact_name",
+                                        "contact_email",
+                                        "contact_phone",
+                                        "u_size",
+                                        "manufacturer",
+                                        "model",
+                                        "serial_no",
+                                        "runtime",
+                                        "installation_date",
+                                        "maintenance_date",
+                                        "maintenance_due",
+                                        "location_u_pos",
+                                        "location_w_pos",
+                                        "end_warranty_date",
+                                        "hostname.1",
+                                        "http_link.1"};
 
-    uint32_t max_power_links = DBAssets::max_number_of_power_links(conn);
+    uint32_t max_power_links = uint32_t(DBAssets::max_number_of_power_links(conn));
     if (max_power_links <= 0)
         max_power_links = 1;
-    uint32_t max_groups = DBAssets::max_number_of_asset_groups(conn);
+    uint32_t max_groups = uint32_t(DBAssets::max_number_of_asset_groups(conn));
     if (max_groups <= 0)
         max_groups = 1;
 
@@ -185,16 +177,16 @@ void
     // 1.1      names from asset element table itself
     for (const auto& k : ASSET_ELEMENT_KEYTAGS) {
         if (k == "id")
-            continue;       //ugly but works
+            continue; // ugly but works
         lcs.add(k);
     }
 
     // 1.2      print power links
     for (uint32_t i = 0; i != max_power_links; i++) {
-        std::string si = std::to_string(i+1);
-        lcs.add("power_source."   + si);
+        std::string si = std::to_string(i + 1);
+        lcs.add("power_source." + si);
         lcs.add("power_plug_src." + si);
-        lcs.add("power_input."    + si);
+        lcs.add("power_input." + si);
     }
 
     // 1.3      print extended attributes
@@ -204,46 +196,44 @@ void
 
     // 1.4      print groups
     for (uint32_t i = 0; i != max_groups; i++) {
-        std::string si = std::to_string(i+1);
-        lcs.add("group."   + si);
+        std::string si = std::to_string(i + 1);
+        lcs.add("group." + si);
     }
 
     lcs.add("id");
     lcs.serialize();
 
     // 2. FOR EACH ROW from v_web_asset_element / t_bios_asset_element do ...
-    std::function<void(const tntdb::Row&)>
-        process_v_web_asset_element_row \
-        = [&conn, &lcs, &KEYTAGS, max_power_links, max_groups, &msg](const tntdb::Row& r)
-    {
+    std::function<void(const tntdb::Row&)> process_v_web_asset_element_row = [&conn, &lcs, &KEYTAGS, max_power_links,
+                                                                              max_groups, &msg](const tntdb::Row& r) {
         a_elmnt_id_t id_num = 0;
-        std::string id;
+        std::string  id;
         r["id"].get(id_num);
-        std::pair<std::string,std::string> asset_names = DBAssets::id_to_name_ext_name (id_num);
-        if (asset_names.first.empty () && asset_names.second.empty ())
+        std::pair<std::string, std::string> asset_names = DBAssets::id_to_name_ext_name(id_num);
+        if (asset_names.first.empty() && asset_names.second.empty())
             throw std::runtime_error(msg.c_str());
         id = asset_names.first;
 
         a_elmnt_id_t id_parent_num = 0;
-        std::string location;
+        std::string  location;
         r["id_parent"].get(id_parent_num);
-        location = DBAssets::id_to_name_ext_name (id_parent_num).second;
+        location = DBAssets::id_to_name_ext_name(id_parent_num).second;
 
         // 2.1      select all extended attributes
-        std::map <std::string, std::pair<std::string, bool> > ext_attrs;
-        int rv = DBAssets::select_ext_attributes(conn, id_num, ext_attrs);
-        if (rv != 0)
+        std::map<std::string, std::pair<std::string, bool>> ext_attrs;
+        int rv1 = DBAssets::select_ext_attributes(conn, id_num, ext_attrs);
+        if (rv1 != 0)
             throw std::runtime_error(msg.c_str());
 
         // 2.3 links
         power_links_t power_links;
-        rv = s_power_links(conn, id_num, power_links);
-        if (rv != 0)
+        rv1 = s_power_links(conn, id_num, power_links);
+        if (rv1 != 0)
             throw std::runtime_error(msg.c_str());
         // 3.4 groups
         std::vector<std::string> groups;
-        rv = DBAssets::select_group_names(conn, id_num, groups);
-        if (rv != 0)
+        rv1 = DBAssets::select_group_names(conn, id_num, groups);
+        if (rv1 != 0)
             throw std::runtime_error(msg.c_str());
 
         // 2.5      PRINT IT
@@ -251,39 +241,38 @@ void
         // ORDER of fields added to the lcs IS SIGNIFICANT
         std::string type_name;
         {
-        lcs.add(asset_names.second);
+            lcs.add(asset_names.second);
 
-        r["type_name"].get(type_name);
-        lcs.add(type_name);
+            r["type_name"].get(type_name);
+            lcs.add(type_name);
 
-        std::string subtype_name = "";
-        // subtype for groups is stored as ext/type
-        if (type_name == "group") {
-            if (ext_attrs.count("type") == 1) {
-                subtype_name = ext_attrs["type"].first;
-                ext_attrs.erase("type");
+            std::string subtype_name = "";
+            // subtype for groups is stored as ext/type
+            if (type_name == "group") {
+                if (ext_attrs.count("type") == 1) {
+                    subtype_name = ext_attrs["type"].first;
+                    ext_attrs.erase("type");
+                }
+            } else {
+                r["subtype_name"].get(subtype_name);
             }
-        }
-        else {
-            r["subtype_name"].get(subtype_name);
-        }
-        if ( subtype_name == "N_A" )
-            subtype_name = "";
-        lcs.add (utils::strip (subtype_name));
+            if (subtype_name == "N_A")
+                subtype_name = "";
+            lcs.add(utils::strip(subtype_name));
 
-        lcs.add(location);
+            lcs.add(location);
 
-        std::string status;
-        r["status"].get(status);
-        lcs.add(status);
+            std::string status;
+            r["status"].get(status);
+            lcs.add(status);
 
-        uint32_t priority;
-        r["priority"].get(priority);
-        lcs.add("P" + std::to_string(priority));
+            uint32_t priority;
+            r["priority"].get(priority);
+            lcs.add("P" + std::to_string(priority));
 
-        std::string asset_tag;
-        r["asset_tag"].get(asset_tag);
-        lcs.add(asset_tag);
+            std::string asset_tag;
+            r["asset_tag"].get(asset_tag);
+            lcs.add(asset_tag);
         }
 
         // 2.5.2        power location
@@ -293,11 +282,10 @@ void
             std::string input{""};
 
             if (i >= power_links.size()) {
-                //nothing here, exists only for consistency reasons
-            }
-            else {
-                int rv = DBAssets::name_to_extname (std::get<0>(power_links[i]), source);
-                if (rv != 0)
+                // nothing here, exists only for consistency reasons
+            } else {
+                int rv2 = DBAssets::name_to_extname(std::get<0>(power_links[i]), source);
+                if (rv2 != 0)
                     throw std::runtime_error(msg.c_str());
                 plug_src = std::get<1>(power_links[i]);
                 input    = std::get<2>(power_links[i]);
@@ -309,19 +297,18 @@ void
 
         // convert necessary ids to names, for now just logical_asset
         {
-            auto it = ext_attrs.find ("logical_asset");
-            if (it != ext_attrs.end ()) {
+            auto it = ext_attrs.find("logical_asset");
+            if (it != ext_attrs.end()) {
                 std::string extname;
-                int rv = DBAssets::name_to_extname (it->second.first, extname);
-                if (rv != 0)
+                int         rv2 = DBAssets::name_to_extname(it->second.first, extname);
+                if (rv2 != 0)
                     throw std::runtime_error(msg.c_str());
-                ext_attrs ["logical_asset"] = make_pair (extname, it->second.second);
+                ext_attrs["logical_asset"] = make_pair(extname, it->second.second);
             }
         }
         // 2.5.3        read-write (!read_only) extended attributes
         for (const auto& k : KEYTAGS) {
-            if (ext_attrs.count(k) == 1 &&
-                !ext_attrs[k].second) {
+            if (ext_attrs.count(k) == 1 && !ext_attrs[k].second) {
                 lcs.add(ext_attrs[k].first);
             } else {
                 lcs.add("");
@@ -334,8 +321,8 @@ void
                 lcs.add("");
             else {
                 std::string extname;
-                int rv = DBAssets::name_to_extname (groups[i], extname);
-                if (rv != 0)
+                int         rv2 = DBAssets::name_to_extname(groups[i], extname);
+                if (rv2 != 0)
                     throw std::runtime_error(msg.c_str());
                 lcs.add(extname);
             }
@@ -343,19 +330,12 @@ void
 
         lcs.add(id);
         lcs.serialize();
-
     };
 
     if (dc_id > 0) {
-        rv = DBAssets::select_asset_element_by_dc(
-                conn,
-                dc_id,
-                process_v_web_asset_element_row);
-    }
-    else {
-        rv = DBAssets::select_asset_element_all(
-                conn,
-                process_v_web_asset_element_row);
+        rv = DBAssets::select_asset_element_by_dc(conn, dc_id, process_v_web_asset_element_row);
+    } else {
+        rv = DBAssets::select_asset_element_all(conn, process_v_web_asset_element_row);
     }
     if (rv != 0)
         throw std::runtime_error(msg.c_str());
@@ -363,36 +343,33 @@ void
 }
 
 struct Outlet
-  {
-    std::string label;
-    bool label_r;
-    std::string type;
-    bool type_r;
-    std::string group;
-    bool group_r;
-  };
-
-std::string getOutletNumber(const std::string &extAttributeName)
 {
-  auto dot1 = extAttributeName.find_first_of(".");
-  std::string oNumber = extAttributeName.substr(dot1 + 1);
-  auto dot2 = oNumber.find_first_of(".");
-  oNumber = oNumber.substr(0, dot2);
-  return oNumber;
+    std::string label;
+    bool        label_r;
+    std::string type;
+    bool        type_r;
+    std::string group;
+    bool        group_r;
+};
+
+std::string getOutletNumber(const std::string& extAttributeName)
+{
+    auto        dot1    = extAttributeName.find_first_of(".");
+    std::string oNumber = extAttributeName.substr(dot1 + 1);
+    auto        dot2    = oNumber.find_first_of(".");
+    oNumber             = oNumber.substr(0, dot2);
+    return oNumber;
 }
 
-void
-    export_asset_json (std::ostream& out, std::set<std::string>* listElements)
+void export_asset_json(std::ostream& out, std::set<std::string>* listElements)
 {
     asset_manager asset_mgr;
     // 0.) tntdb connection
     tntdb::Connection conn;
-    std::string msg{"no connection to database"};
-    try{
+    std::string       msg{"no connection to database"};
+    try {
         conn = tntdb::connect(DBConn::url);
-    }
-    catch(...)
-    {
+    } catch (...) {
         log_error("%s", msg.c_str());
         LOG_END;
         throw std::runtime_error(msg.c_str());
@@ -404,34 +381,32 @@ void
     cxxtools::SerializationInfo si;
     si.setCategory(cxxtools::SerializationInfo::Category::Array);
     // 2. FOR EACH ROW from v_web_asset_element / t_bios_asset_element do ...
-    std::function<void(const tntdb::Row&)>
-        process_v_web_asset_element_row_json \
-        = [&conn, &si, &msg, &asset_mgr, listElements](const tntdb::Row& r)
-    {
+    std::function<void(const tntdb::Row&)> process_v_web_asset_element_row_json = [&conn, &si, &msg, &asset_mgr,
+                                                                                   listElements](const tntdb::Row& r) {
         a_elmnt_id_t id_num = 0;
-        std::string id;
+        std::string  id;
         r["id"].get(id_num);
-        std::pair<std::string,std::string> asset_names = DBAssets::id_to_name_ext_name (id_num);
-        if (asset_names.first.empty () && asset_names.second.empty ())
+        std::pair<std::string, std::string> asset_names = DBAssets::id_to_name_ext_name(id_num);
+        if (asset_names.first.empty() && asset_names.second.empty())
             throw std::runtime_error(msg.c_str());
         id = asset_names.first;
 
-        if(listElements == NULL || listElements->count(id) <= 0) {
-          return;
+        if (listElements == NULL || listElements->count(id) <= 0) {
+            return;
         }
         a_elmnt_id_t id_parent_num = 0;
-        std::string location;
+        std::string  location;
         r["id_parent"].get(id_parent_num);
-        std::pair<std::string,std::string> location_names;
+        std::pair<std::string, std::string> location_names;
         if (id_parent_num > 0) {
             // Protect against invalid IDs.
-            location_names = DBAssets::id_to_name_ext_name (id_parent_num);
+            location_names = DBAssets::id_to_name_ext_name(id_parent_num);
         }
-        location = location_names.second;
+        location                = location_names.second;
         std::string location_id = location_names.first;
 
         // 2.1      select all extended attributes
-        std::map <std::string, std::pair<std::string, bool> > ext_attrs;
+        std::map<std::string, std::pair<std::string, bool>> ext_attrs;
         int rv = DBAssets::select_ext_attributes(conn, id_num, ext_attrs);
         if (rv != 0)
             throw std::runtime_error(msg.c_str());
@@ -453,69 +428,69 @@ void
         // ORDER of fields added to the lcs IS SIGNIFICANT
         std::string type_name;
         {
-        si_asset.addMember("id") <<= id;
-        si_asset.addMember("power_devices_in_uri") <<= "/api/v1/assets?in=" + id + "&sub_type=epdu,pdu,feed,genset,ups,sts,rackcontroller";
-        si_asset.addMember("name") <<= asset_names.second;
+            si_asset.addMember("id") <<= id;
+            si_asset.addMember("power_devices_in_uri") <<=
+                "/api/v1/assets?in=" + id + "&sub_type=epdu,pdu,feed,genset,ups,sts,rackcontroller";
+            si_asset.addMember("name") <<= asset_names.second;
 
-        std::string status;
-        r["status"].get(status);
-        si_asset.addMember("status") <<= status;
+            std::string status;
+            r["status"].get(status);
+            si_asset.addMember("status") <<= status;
 
-        uint32_t priority;
-        r["priority"].get(priority);
-        si_asset.addMember("priority") <<= ("P" + std::to_string(priority));
+            uint32_t priority;
+            r["priority"].get(priority);
+            si_asset.addMember("priority") <<= ("P" + std::to_string(priority));
 
-        r["type_name"].get(type_name);
-        si_asset.addMember("type") <<= type_name;
+            r["type_name"].get(type_name);
+            si_asset.addMember("type") <<= type_name;
 
-        if(!location.empty()) {
-          si_asset.addMember("location_uri") <<= "/api/v1/asset/" + location_id;
-          si_asset.addMember("location_id") <<= location_id;
-        }
-        si_asset.addMember("location") <<= location;
-
-        if (id_parent_num > 0) {
-            auto parentAsset = asset_mgr.get_item1(id_parent_num);
-            si_asset.addMember("location_type") <<= parentAsset.item.basic.type_name;
-        } else {
-            si_asset.addMember("location_type") <<= "";
-        }
-
-        //TODO : groups
-        cxxtools::SerializationInfo& si_asset_groups = si_asset.addMember("groups");
-        si_asset_groups.setCategory(cxxtools::SerializationInfo::Category::Array);
-        /*
-        // 2.5.4        groups
-        for (uint32_t i = 0; i != groups.size(); i++) {
-            if (i >= groups.size())
-                lcs.add("");
-            else {
-                std::string extname;
-                int rv = DBAssets::name_to_extname (groups[i], extname);
-                if (rv != 0)
-                    throw std::runtime_error(msg.c_str());
-                lcs.add(extname);
+            if (!location.empty()) {
+                si_asset.addMember("location_uri") <<= "/api/v1/asset/" + location_id;
+                si_asset.addMember("location_id") <<= location_id;
             }
-        }
-*/
-        std::string subtype_name = "";
-        // subtype for groups is stored as ext/type
-        if (type_name == "group") {
-            if (ext_attrs.count("type") == 1) {
-                subtype_name = ext_attrs["type"].first;
-                ext_attrs.erase("type");
+            si_asset.addMember("location") <<= location;
+
+            if (id_parent_num > 0) {
+                auto parentAsset = asset_mgr.get_item1(id_parent_num);
+                si_asset.addMember("location_type") <<= parentAsset.item.basic.type_name;
+            } else {
+                si_asset.addMember("location_type") <<= "";
             }
-        }
-        else {
-            r["subtype_name"].get(subtype_name);
-        }
-        if ( subtype_name == "N_A" )
-            subtype_name = "";
 
-        si_asset.addMember("sub_type") <<= utils::strip (subtype_name);
+            // TODO : groups
+            cxxtools::SerializationInfo& si_asset_groups = si_asset.addMember("groups");
+            si_asset_groups.setCategory(cxxtools::SerializationInfo::Category::Array);
+            /*
+            // 2.5.4        groups
+            for (uint32_t i = 0; i != groups.size(); i++) {
+                if (i >= groups.size())
+                    lcs.add("");
+                else {
+                    std::string extname;
+                    int rv = DBAssets::name_to_extname (groups[i], extname);
+                    if (rv != 0)
+                        throw std::runtime_error(msg.c_str());
+                    lcs.add(extname);
+                }
+            }
+    */
+            std::string subtype_name = "";
+            // subtype for groups is stored as ext/type
+            if (type_name == "group") {
+                if (ext_attrs.count("type") == 1) {
+                    subtype_name = ext_attrs["type"].first;
+                    ext_attrs.erase("type");
+                }
+            } else {
+                r["subtype_name"].get(subtype_name);
+            }
+            if (subtype_name == "N_A")
+                subtype_name = "";
+
+            si_asset.addMember("sub_type") <<= utils::strip(subtype_name);
         }
 
-        //TODO : Parents
+        // TODO : Parents
         cxxtools::SerializationInfo& si_asset_parents = si_asset.addMember("parents");
         si_asset_parents.setCategory(cxxtools::SerializationInfo::Category::Array);
 
@@ -524,16 +499,15 @@ void
         si_asset_powers.setCategory(cxxtools::SerializationInfo::Category::Array);
         for (uint32_t i = 0; i != power_links.size(); i++) {
             cxxtools::SerializationInfo& si_power = si_asset_powers.addMember("");
-            std::string source{""};
-            std::string plug_src{""};
-            std::string input{""};
+            std::string                  source{""};
+            std::string                  plug_src{""};
+            std::string                  input{""};
 
             if (i >= power_links.size()) {
-                //nothing here, exists only for consistency reasons
-            }
-            else {
-                int rv = DBAssets::name_to_extname (std::get<0>(power_links[i]), source);
-                if (rv != 0)
+                // nothing here, exists only for consistency reasons
+            } else {
+                int rv1 = DBAssets::name_to_extname(std::get<0>(power_links[i]), source);
+                if (rv1 != 0)
                     throw std::runtime_error(msg.c_str());
                 plug_src = std::get<1>(power_links[i]);
                 input    = std::get<2>(power_links[i]);
@@ -546,13 +520,13 @@ void
 
         // convert necessary ids to names, for now just logical_asset
         {
-            auto it = ext_attrs.find ("logical_asset");
-            if (it != ext_attrs.end ()) {
+            auto it = ext_attrs.find("logical_asset");
+            if (it != ext_attrs.end()) {
                 std::string extname;
-                int rv = DBAssets::name_to_extname (it->second.first, extname);
-                if (rv != 0)
+                int         rv1 = DBAssets::name_to_extname(it->second.first, extname);
+                if (rv1 != 0)
                     throw std::runtime_error(msg.c_str());
-                ext_attrs ["logical_asset"] = make_pair (extname, it->second.second);
+                ext_attrs["logical_asset"] = make_pair(extname, it->second.second);
             }
         }
 
@@ -562,118 +536,142 @@ void
 
         std::string asset_tag;
         r["asset_tag"].get(asset_tag);
-        if(!asset_tag.empty()) {
-          cxxtools::SerializationInfo& si_ext_asset_tag = si_asset_ext_list.addMember("");
-          si_ext_asset_tag.addMember("asset_tag") <<= asset_tag;
-          si_ext_asset_tag.addMember("read_only") <<= false;
+        if (!asset_tag.empty()) {
+            cxxtools::SerializationInfo& si_ext_asset_tag = si_asset_ext_list.addMember("");
+            si_ext_asset_tag.addMember("asset_tag") <<= asset_tag;
+            si_ext_asset_tag.addMember("read_only") <<= false;
         }
 
-        std::string t_ip("ip.");
-        cxxtools::Regex r_outlet_label("^outlet\\.[0-9][0-9]*\\.label$");
-        cxxtools::Regex r_outlet_group("^outlet\\.[0-9][0-9]*\\.group$");
-        cxxtools::Regex r_outlet_type("^outlet\\.[0-9][0-9]*\\.type$");
+        std::string                   t_ip("ip.");
+        cxxtools::Regex               r_outlet_label("^outlet\\.[0-9][0-9]*\\.label$");
+        cxxtools::Regex               r_outlet_group("^outlet\\.[0-9][0-9]*\\.group$");
+        cxxtools::Regex               r_outlet_type("^outlet\\.[0-9][0-9]*\\.type$");
+        cxxtools::Regex               r_outlet_switchable("^outlet\\.[0-9][0-9]*\\.switchable");
         std::map<std::string, Outlet> outlets;
 
-        //Print extended attributes
+        // Print extended attributes
         for (const auto& k : ext_attrs) {
-          if(k.first != "name" && (k.first.compare(0, t_ip.length(), t_ip) != 0)) {
-            // filter location_type (already present)
-            if (k.first == "location_type")
-              continue;
+            if (k.first != "name" && (k.first.compare(0, t_ip.length(), t_ip) != 0)) {
+                // filter location_type (already present)
+                if (k.first == "location_type")
+                    continue;
 
-            //We don't want info use in outlets
-            if (r_outlet_label.match(k.first))
-            {
-              auto oNumber = getOutletNumber(k.first);
-              auto it = outlets.find(oNumber);
-              if (it == outlets.cend())
-              {
-                auto r = outlets.emplace(oNumber, Outlet());
-                it = r.first;
-              }
-              it->second.label = k.second.first;
-              it->second.label_r = k.second.second;
-              continue;
+                // We don't want info use in outlets
+                if (r_outlet_label.match(k.first)) {
+                    auto oNumber = getOutletNumber(k.first);
+                    auto it      = outlets.find(oNumber);
+                    if (it == outlets.cend()) {
+                        auto r1 = outlets.emplace(oNumber, Outlet());
+                        it     = r1.first;
+                    }
+                    it->second.label   = k.second.first;
+                    it->second.label_r = k.second.second;
+                    continue;
+                } else if (r_outlet_group.match(k.first)) {
+                    auto oNumber = getOutletNumber(k.first);
+                    auto it      = outlets.find(oNumber);
+                    if (it == outlets.cend()) {
+                        auto r1 = outlets.emplace(oNumber, Outlet());
+                        it     = r1.first;
+                    }
+                    it->second.group   = k.second.first;
+                    it->second.group_r = k.second.second;
+                    continue;
+                } else if (r_outlet_type.match(k.first)) {
+                    auto oNumber = getOutletNumber(k.first);
+                    auto it      = outlets.find(oNumber);
+                    if (it == outlets.cend()) {
+                        auto r1 = outlets.emplace(oNumber, Outlet());
+                        it     = r1.first;
+                    }
+                    it->second.type   = k.second.first;
+                    it->second.type_r = k.second.second;
+                    continue;
+                }
+                // for ups programmable outlet
+                else if (r_outlet_switchable.match(k.first))
+                {
+                    auto oNumber = getOutletNumber(k.first);
+                    auto it = outlets.find(oNumber);
+                    if (it == outlets.cend())
+                    {
+                        outlets.emplace(oNumber, Outlet());
+                    }
+                }
+                // for ups master outlet
+                else if (k.first == "outlet.switchable") {
+                    auto it = outlets.find("0");
+                    if (it == outlets.cend())
+                    {
+                        outlets.emplace("0", Outlet());
+                    }
+                }
+                else if (k.first == "outlet.label") {
+                    auto it = outlets.find("0");
+                    if (it == outlets.cend())
+                    {
+                        auto r1 = outlets.emplace("0", Outlet());
+                        it = r1.first;
+                    }
+                    it->second.label = k.second.first;
+                    it->second.label_r = k.second.second;
+                }
+                // print valid info
+                cxxtools::SerializationInfo& si_ext_obj = si_asset_ext_list.addMember("");
+                si_ext_obj.addMember(k.first) <<= k.second.first;
+                si_ext_obj.addMember("read_only") <<= k.second.second;
             }
-            else if (r_outlet_group.match(k.first))
-            {
-              auto oNumber = getOutletNumber(k.first);
-              auto it = outlets.find(oNumber);
-              if (it == outlets.cend())
-              {
-                auto r = outlets.emplace(oNumber, Outlet());
-                it = r.first;
-              }
-              it->second.group = k.second.first;
-              it->second.group_r = k.second.second;
-              continue;
-            }
-            else if (r_outlet_type.match(k.first))
-            {
-              auto oNumber = getOutletNumber(k.first);
-              auto it = outlets.find(oNumber);
-              if (it == outlets.cend())
-              {
-                auto r = outlets.emplace(oNumber, Outlet());
-                it = r.first;
-              }
-              it->second.type = k.second.first;
-              it->second.type_r = k.second.second;
-              continue;
-            }
-            //print valid info
-            cxxtools::SerializationInfo& si_ext_obj = si_asset_ext_list.addMember("");
-            si_ext_obj.addMember(k.first) <<= k.second.first;
-            si_ext_obj.addMember("read_only") <<= k.second.second;
-          }
         }
 
-        //Print Ips
+        // Print Ips
         cxxtools::SerializationInfo& si_ips_list = si_asset.addMember("ips");
         si_ips_list.setCategory(cxxtools::SerializationInfo::Category::Array);
         for (const auto& k : ext_attrs) {
-          if(k.first.compare(0, t_ip.length(), t_ip) == 0) {
-            si_ips_list.addMember("") <<= k.second.first;
-          }
+            if (k.first.compare(0, t_ip.length(), t_ip) == 0) {
+                si_ips_list.addMember("") <<= k.second.first;
+            }
         }
 
-        //Print outlets
-        if(!outlets.empty()) {
-          cxxtools::SerializationInfo& si_outlets = si_asset.addMember("outlets");
-          for (auto &oneOutlet : outlets)
-          {
-            cxxtools::SerializationInfo& si_outlet_x = si_outlets.addMember(oneOutlet.first);
-            si_outlet_x.setCategory(cxxtools::SerializationInfo::Category::Array);
+        // Print outlets
+        if (!outlets.empty()) {
+            cxxtools::SerializationInfo& si_outlets = si_asset.addMember("outlets");
+            for (auto& oneOutlet : outlets) {
+                cxxtools::SerializationInfo& si_outlet_x = si_outlets.addMember(oneOutlet.first);
+                si_outlet_x.setCategory(cxxtools::SerializationInfo::Category::Array);
 
-            cxxtools::SerializationInfo& si_outlet_label = si_outlet_x.addMember("");
-            si_outlet_label.addMember("name") <<= "label";
-            si_outlet_label.addMember("value") <<= oneOutlet.second.label;
-            si_outlet_label.addMember("read_only") <<= oneOutlet.second.label_r;
+                cxxtools::SerializationInfo& si_outlet_label = si_outlet_x.addMember("");
+                si_outlet_label.addMember("name") <<= "label";
+                // if label is empty, get index value
+                if(!oneOutlet.second.label.empty()) {
+                    si_outlet_label.addMember("value") <<= oneOutlet.second.label;
+                    si_outlet_label.addMember("read_only") <<= oneOutlet.second.label_r;
+                }
+                else {
+                    si_outlet_label.addMember("value") <<= oneOutlet.first;
+                    si_outlet_label.addMember("read_only") <<= true;
+                }
 
-            if(!oneOutlet.second.group.empty()) {
-              cxxtools::SerializationInfo& si_outlet_group = si_outlet_x.addMember("");
-              si_outlet_group.addMember("name") <<= "group";
-              si_outlet_group.addMember("value") <<= oneOutlet.second.group;
-              si_outlet_group.addMember("read_only") <<= oneOutlet.second.group_r;
+                if (!oneOutlet.second.group.empty()) {
+                    cxxtools::SerializationInfo& si_outlet_group = si_outlet_x.addMember("");
+                    si_outlet_group.addMember("name") <<= "group";
+                    si_outlet_group.addMember("value") <<= oneOutlet.second.group;
+                    si_outlet_group.addMember("read_only") <<= oneOutlet.second.group_r;
+                }
+
+                if (!oneOutlet.second.type.empty()) {
+                    cxxtools::SerializationInfo& si_outlet_type = si_outlet_x.addMember("");
+                    si_outlet_type.addMember("name") <<= "type";
+                    si_outlet_type.addMember("value") <<= oneOutlet.second.type;
+                    si_outlet_type.addMember("read_only") <<= oneOutlet.second.type_r;
+                }
             }
-
-            if(!oneOutlet.second.type.empty()) {
-              cxxtools::SerializationInfo& si_outlet_type = si_outlet_x.addMember("");
-              si_outlet_type.addMember("name") <<= "type";
-              si_outlet_type.addMember("value") <<= oneOutlet.second.type;
-              si_outlet_type.addMember("read_only") <<= oneOutlet.second.type_r;
-            }
-          }
         }
     };
 
-    int rv = DBAssets::select_asset_element_all(
-            conn,
-            process_v_web_asset_element_row_json);
+    int rv = DBAssets::select_asset_element_all(conn, process_v_web_asset_element_row_json);
     if (rv != 0)
         throw std::runtime_error(msg.c_str());
 
-    serializer.inputUtf8(true);
     serializer.serialize(si).finish();
     transaction.commit();
 }

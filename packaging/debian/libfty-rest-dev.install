@@ -1,9 +1,0 @@
-# Note: this file is customized after zproject generation, be sure to keep it
-# Note: this file was amended to NOT include some files
-# since tntnet shared object is not a typical library
-# e.g. /usr/lib/x86_64-linux-gnu/pkgconfig/libfty_rest.pc
-# Note that the .so symlink is delivered by main "library" package
-usr/include/*
-###usr/lib/*/*/libfty_rest.so
-###usr/lib/*/libfty_rest.so
-usr/lib/*/pkgconfig/libfty_rest.pc

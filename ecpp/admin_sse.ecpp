@@ -1,0 +1,283 @@
+<#
+ #
+ # Copyright (C) 2018 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ \file admin_sse.ecpp
+ \author Nicolas DAVIET <nicolasdaviet@Eaton.com>
+ \brief Open an sse connection to send any notification to UI
+*/
+#><%pre>
+#include <fty_proto.h>
+#include <tnt/tntnet.h>
+#include <fty_common_macros.h>
+#include <fty_common_rest_helpers.h>
+#include <fty_common_db_dbpath.h>
+#include <fty_common_db_asset.h>
+#include <fty_common_asset_types.h>
+#include "web/src/sse.h"
+#include "shared/utils.h"
+#include "shared/utilspp.h"
+#include "cleanup.h"
+
+</%pre>
+<%request scope="global">
+UserInfo user;
+std::string gaccess_token;
+bool database_ready;
+</%request>
+<%cpp>
+    // verify server is ready
+    if (!database_ready) {
+        log_debug ("Database is not ready yet.");
+        std::string err = TRANSLATE_ME ("Database is not ready yet, please try again after a while.");
+        http_die ("internal-error", err.c_str ());
+    }
+
+    // check user permissions
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Dashboard, "R"},
+            {BiosProfile::Admin,     "R"}
+            };
+    CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
+
+    // sanity checks
+    std::string dc = qparam.param("datacenter");
+    log_debug ("Request parameters - Initial tainted values received: datacenter = '%s'\n",
+            dc.c_str ());
+
+    if (!dc.empty ())
+    {
+        if (!persist::is_ok_name (dc.c_str ()))
+        {
+            http_die ("request-param-bad", dc.c_str ());
+        }
+    } else {
+        http_die ("request-param-required", "datacenter");
+    }
+
+    int64_t dbid =  DBAssets::name_to_asset_id (dc);
+    if (dbid == -1) {
+            http_die ("element-not-found", dc.c_str ());
+    }
+    if (dbid == -2) {
+            std::string err = TRANSLATE_ME ("Connecting to database failed.");
+            http_die ("internal-error", err.c_str ());
+    }
+    log_debug ("datacenter id = '%" PRIu32 "'.", uint32_t(dbid));
+
+    Sse sseManager;
+    sseManager.setDatacenter(dc);
+    sseManager.setDatacenterId(uint32_t(dbid));
+
+    try {
+        sseManager.setConnection(tntdb::connect (DBConn::url));
+    }
+    catch (const tntdb::Error& e) {
+        log_error ("tntdb::connect (url = '%s') failed: %s.", DBConn::url.c_str (), e.what ());
+        std::string err = TRANSLATE_ME ("Connecting to database failed.");
+        http_die ("internal-error", err.c_str ());
+    }
+    catch (const std::exception& e) {
+        log_error ("Exception caught: '%s'.", e.what ());
+        std::string err = JSONIFY (e.what ());
+        http_die ("internal-error", err.c_str ());
+    }
+
+    //Get asset from the datacenter
+    std::string errorMsgAsset = sseManager.loadAssetFromDatacenter();
+    if (!errorMsgAsset.empty ()) {
+        http_die ("internal-error", errorMsgAsset.c_str ());
+    }
+
+    // connect to malamute and streams
+    std::string errorMsgMlm  = sseManager.connectMalamute();
+    if (!errorMsgMlm.empty ()) {
+        http_die ("internal-error", errorMsgMlm.c_str ());
+    }
+    //Stream Alerts
+    if (-1 == sseManager.consumeStream(FTY_PROTO_STREAM_ALERTS, ".*")) {
+        std::string err = TRANSLATE_ME ("Cannot consume ALERT stream");
+        http_die ("internal-error", err.c_str ());
+    }
+    //Stream Assets
+    if (-1 == sseManager.consumeStream(FTY_PROTO_STREAM_ASSETS, ".*")) {
+        std::string err = TRANSLATE_ME ("Cannot consume ASSETS stream");
+        http_die ("internal-error", err.c_str ());
+    }
+    //Stream Sse
+    if (-1 == sseManager.consumeStream("SSE", ".*")) {
+        std::string err = TRANSLATE_ME ("Cannot consume SSE stream");
+        http_die ("internal-error", err.c_str ());
+    }
+
+    // Sse specification :  https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events
+    reply.setContentType("text/event-stream");
+    reply.setDirectMode();
+    reply.out().flush();
+
+    //get the token from the request
+    std::string access_token = gaccess_token;
+
+    if (access_token.empty())
+    {
+        log_error("Token empty");
+        std::string err = TRANSLATE_ME ("Cannot get token value");
+        http_die ("internal-error", err.c_str ());
+    }
+
+    sseManager.setToken(access_token);
+
+    // Every ( connection request time out / 2) minutes we close the connection 
+    // to avoid a connection timeout which would kill tntnet.
+    // The client will reconnect itself.
+
+    unsigned tntRequestTimeout = tnt::TntConfig::it().maxRequestTime * 1000 / 2 ;
+    int64_t start = zclock_mono();
+    int64_t sendNextExpTime = 0;
+    int64_t diff = 0, now = 0;
+    std::string json;
+
+    while (diff < tntRequestTimeout) {
+
+        //Check if a request shutdown was initiated
+        if (tnt::Tntnet::shouldStop())
+        {
+            log_info("Initialization shutdown request for tntnet: Sse stop");
+            break;
+        }
+
+        now = zclock_mono();
+        diff = now - start;
+
+        //check if token is still valid
+        //If valid return the time before the session expiration
+        long int tme = sseManager.checkTokenValidity();
+        if (-1 == tme)
+        {
+            log_info ("sse : Token revoked or expired");
+            break;
+        }
+
+        // Each minute, send the time before expiration
+        if ((now - sendNextExpTime) > 60000)
+        {
+            // send the time before the token is expired
+            json = "data:{\"topic\":\"session\",\"payload\":{\"exptime\":" ;
+            json +=  std::to_string(tme).c_str();
+            json +=  "}}\n\n";
+
+            reply.out() << json;
+            if (reply.out().flush().fail())
+                { log_debug ("Error during flush"); break; }
+            sendNextExpTime = now;
+        }
+
+        // wait for the right message or time-out
+        zsock_t *which = static_cast<zsock_t*>(zpoller_wait(sseManager.getPoller(), 10000));
+        zmsg_t *recv_msg = NULL;
+        if (which == sseManager.getPipe())
+            recv_msg = sseManager.getMessageFromMlm();
+
+        if (!recv_msg)
+        {
+            if (zpoller_expired (sseManager.getPoller())) {
+                //Send heartbeat message
+                json = "data:{\"topic\":\"heartbeat\",\"payload\":{}}\n\n";
+
+                reply.out() << json;
+                if (reply.out().flush().fail())
+                    { log_debug ("Error during flush"); break; }
+                continue;
+            }
+
+            if (zpoller_terminated(sseManager.getPoller())) {
+                log_error ("zpoller_wait(timeout = 10000) terminated.");
+                break;
+            }
+            
+            continue;
+        }
+
+        // Here recv_msg is valid
+
+        if (sseManager.messageCommand() == "STREAM DELIVER")
+        {
+            json = "";
+
+            if (fty_proto_is(recv_msg)) // fty proto msg
+            {
+                fty_proto_t *msgProto = fty_proto_decode (&recv_msg);
+                
+                if (msgProto == NULL)
+                {
+                    log_debug ("msgProto is NULL");
+                }
+                else if (fty_proto_id (msgProto) == FTY_PROTO_ALERT)
+                {
+                    log_debug ("message is FTY_PROTO_ALERT");
+                    json = sseManager.changeFtyProtoAlert2Json(msgProto);
+                }
+                else if (fty_proto_id (msgProto) == FTY_PROTO_ASSET)
+                {
+                    log_debug ("message is FTY_PROTO_ASSET");
+                    json = sseManager.changeFtyProtoAsset2Json(msgProto);
+                }
+                else
+                {
+                    log_debug ("FTY_PROTO message not handled (id: %d)", 
+                        fty_proto_id (msgProto));
+                }
+
+                // cleanup
+                fty_proto_destroy (&msgProto);
+            }
+            else // generic msg
+            {
+                if (sseManager.messageSubject() == "SSE")
+                {
+                    log_debug ("message is SSE");
+                    json = sseManager.changeSseMessage2Json(recv_msg);
+                    //log_debug ("SSE json: %s", json.c_str());
+                }
+                else
+                {
+                    log_debug ("%s message not handled (subject: %s)", 
+                        sseManager.messageCommand().c_str(),
+                        sseManager.messageSubject().c_str());
+                }
+            }
+
+            if (!json.empty())
+            {
+                reply.out() << json;
+                if (reply.out().flush().fail())
+                    { log_debug ("Error during flush"); break; }
+            }
+        }
+        else
+        {
+            log_debug ("%s message not handled", 
+                sseManager.messageCommand().c_str());
+        }
+
+        // cleanup
+        zmsg_destroy (&recv_msg);
+    }//while
+
+</%cpp>

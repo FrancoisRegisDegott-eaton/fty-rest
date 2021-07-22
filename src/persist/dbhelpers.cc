@@ -18,8 +18,6 @@
  *
  */
 
-#include "dbhelpers.h"
-
 #include <assert.h>
 
 #include <czmq.h>
@@ -31,7 +29,9 @@
 #include <fty_common_db.h>
 #include <fty_common.h>
 #include <fty_log.h>
-#include "persist_error.h"
+
+#include "db/dbhelpers.h"
+#include "persist/persist_error.h"
 
 
 //TODO: used only in tests for legacy autodiscovery - should proably be removed

@@ -1,0 +1,353 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ * \file license_POST.ecpp
+ * \author Michal Hrusecky <MichalHrusecky@Eaton.com>
+ * \author Jim Klimov <EvgenyKlimov@Eaton.com>
+ * \author Alena Chernikava <alenachernikava@Eaton.com>
+ * \brief Accept license (EULA)
+ */
+ #><%pre>
+#include <unistd.h>
+#include <iostream>
+#include <stdio.h>
+#include <fstream>
+#include <string.h>
+#include <stdlib.h>
+#include <tntdb.h>
+
+#include "shared/utils.h"
+#include "cleanup.h"
+#include <fty_common_macros.h>
+#include <fty_common_rest_helpers.h>
+#include <fty_common_db_dbpath.h>
+#include <fty_common_filesystem.h>
+#include <fty_common_rest_audit_log.h>
+#include <fty/process.h>
+
+</%pre>
+<%request scope="global">
+UserInfo user;
+bool database_ready;
+</%request>
+<%cpp>
+{
+    // verify server is ready check is skipped, as this request starts database
+
+    // check user permissions
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Admin,     "C"}
+            };
+    std::string audit_msg = std::string ("Request CREATE license FAILED");
+    CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.empty () ? nullptr : audit_msg.c_str ());
+
+    char *license_file = get_current_license_file ();
+    if ( license_file == NULL ) {
+        std::string err =  TRANSLATE_ME ("Cannot get the path to the text of the current license");
+        log_error_audit ("Request CREATE license FAILED");
+        http_die ("internal-error", err.c_str ());
+    }
+    char *current_license_version = get_current_license_version (license_file);
+    if ( current_license_version == NULL ) {
+        free (license_file); license_file = NULL;
+        std::string err =  TRANSLATE_ME ("Cannot get version of the text of the current license");
+        log_error_audit ("Request CREATE license FAILED");
+        http_die ("internal-error", err.c_str ());
+    }
+
+    char *accepted_license_file = get_accepted_license_file ();
+    if ( accepted_license_file == NULL ) {
+        free (current_license_version); current_license_version = NULL;
+        free (license_file); license_file = NULL;
+        std::string err =  TRANSLATE_ME ("Cannot get the path to the actual status of the accepted license");
+        log_error_audit ("Request CREATE license FAILED");
+        http_die ("internal-error", err.c_str ());
+    }
+    log_debug ("variable accepted_license_file == '%s'", accepted_license_file);
+    FILE *f = fopen (accepted_license_file, "w");
+    if ( f == NULL ) {
+        free (accepted_license_file); accepted_license_file = NULL;
+        free (current_license_version); current_license_version = NULL;
+        free (license_file); license_file = NULL;
+        std::string err =  TRANSLATE_ME ("Cannot open file with actual information about accepted license");
+        log_error_audit ("Request CREATE license FAILED");
+        http_die ("internal-error", err.c_str ());
+    }
+    uint64_t tme = uint64_t(::time (NULL));
+    fprintf (f, "%s\n%" PRIu64 "\n%s\n", current_license_version, tme, user.login ().c_str ());
+    fclose (f);
+    log_debug ("License: version='%s',tme='%" PRIu64 "',user='%s')",
+                current_license_version, tme, user.login ().c_str ());
+
+    std::string clv {current_license_version};
+    free (accepted_license_file); accepted_license_file = NULL;
+    free (current_license_version); current_license_version = NULL;
+    free (license_file); license_file = NULL;
+
+    // once done, read and setup environment files for accessing the database
+    if (!shared::is_file (PASSWD_FILE) || !database_ready) {
+
+        // call fty-db-init to start mysql and initialize the database
+        // and more importantly - wait for initialization to complete
+        // (it should have got started via systemd .path unit by now)
+        // before we try to re-read credentials below. Also waits for
+        // other components of the ecosystem (the services WantedBy
+        // out bios.target) which can play a role in REST API backend
+        // as used by the initial setup wizard and/or dashboard soon.
+        // TODO: depending on storage and other external conditions,
+        // this operation can take a while. The tntnet web server can
+        // consider this thread "hung" and would self-restart after
+        // 10 minutes; if this does happen - we should add a thread
+        // to report "we're alive" to the server while waiting...
+        // This can be also used to update progress info for UI, so
+        // the user does not stare at a spinner for minutes and wonder
+        // if the new instance has frozen.
+
+        // Note: here and below we log progress with the timestamps,
+        // because it seems that log_info() et al are cached into a
+        // buffer and only get to syslog or journal when the request
+        // processing completes - and the lines are all timestamped
+        // at that moment. This makes investigation of how long the
+        // start-db-services and related activities took very hard.
+        uint64_t tme_start = uint64_t(::time (NULL));
+        log_info ("Starting db service, timestamp=%" PRIu64 " ..." , tme_start);
+        std::string proc_out, proc_err;
+
+        sleep(10);
+
+        // due to some OS circumstances, the script can sometimes block
+        // while calling the /bin/systemctl and is eventually killed,
+        // even though the actual services of our product have started
+        // long before this; so even if it failed - try to use the DB...
+        fty::Process proc("/usr/libexec/fty/start-db-services", {}, fty::Capture::Out | fty::Capture::Err);
+        if (auto ret = proc.run(); !ret) {
+            logError("Starting of start-db-services have failed. Consult system logs");
+            logError(ret.error());
+            http_die("internal-error", ret.error().c_str());
+        }
+        auto rv_svc = proc.wait(15000);
+        proc_out = proc.readAllStandardOutput();
+        proc_err = proc.readAllStandardError();
+        proc.kill();
+
+        uint64_t tme_finish = uint64_t(::time (NULL));
+        if (rv_svc) {
+            log_info ("Starting db service completed, timestamp=%" PRIu64 " (duration=%" PRIu64 "), exit-code=%i ..." ,
+                tme_finish, (tme_finish - tme_start), *rv_svc);
+        } else {
+            log_info ("Starting db service completed, timestamp=%" PRIu64 " (duration=%" PRIu64 "), exit-code=%s ..." ,
+                tme_finish, (tme_finish - tme_start), rv_svc.error().c_str());
+        }
+        if (!rv_svc || *rv_svc != 0) {
+            log_error ("Starting of start-db-services have failed. Consult system logs");
+            log_error ("%s failed with error %s.\n===== STDOUT: =====\n%s\n===== STDERR: =====\n%s\n=====",
+                "/usr/libexec/fty/start-db-services", rv_svc.error().c_str(), proc_out.c_str (), proc_err.c_str ());
+
+            if (rv_svc.error() != "timeout") {
+                std::string err =  TRANSLATE_ME ("Starting of start-db-services have failed. Consult system logs");
+                log_error_audit ("Request CREATE license FAILED");
+                http_die ("internal-error", err.c_str ());
+            }
+            // Negative return means killed by signal, typically by our
+            // subprocess timeout handling - fall through to try using DB
+
+            {
+                std::string proc_out1, proc_err1;
+                int lastResult = 0;
+                for (int i = 0; i < 10; ++i) {
+                    fty::Process::Arguments proc_cmd = {"systemctl", "list-ipm-units", "--active", "fty-db-engine"};
+                    // This should get our "systemctl" wrapper via PATH
+
+                    auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
+
+                    if (!rv) {
+                        logError(rv.error());
+                        log_error_audit ("Request CREATE license FAILED");
+                        http_die ("internal-error", TRANSLATE_ME ("Database software service is not running").c_str());
+                    }
+
+                    lastResult = *rv;
+                    if (*rv == 0) {
+                        break;
+                    }
+                    sleep(5);
+                }
+
+                if (lastResult != 0) {
+                    std::string message;
+                    message = "`sudo systemctl list-ipm-units --active fty-db-engine`"
+                        " failed (service is not currently active). Return value = '"
+                        + std::to_string (lastResult) + "', stderr = '" + proc_err1 + "'." ;
+                    log_error ("%s", message.c_str ());
+                    std::string err =  TRANSLATE_ME ("Database software service is not running");
+                    log_error_audit ("Request CREATE license FAILED");
+                    http_die ("internal-error", err.c_str ());
+                } else {
+                    // Not quite an error, but we want this message at the same logging level
+                    log_error ("NOTE: Although start-db-services script was killed, the fty-db-engine service is okay");
+                }
+            }
+
+
+            {
+                std::string proc_out1, proc_err1;
+                int lastResult = 0;
+
+                // try to increase timeout..
+                for (int i = 0; i < 50; ++i) {
+                    fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-init"};
+                    // This should get our "systemctl" wrapper via PATH
+
+                    auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
+
+                    if (!rv) {
+                        logError(rv.error());
+                        log_error_audit("--! %s", rv.error().c_str());
+                        log_error_audit ("Request CREATE license FAILED");
+                        http_die ("internal-error", TRANSLATE_ME ("Database schema was not installed or verified successfully").c_str());
+                    }
+
+                    lastResult = *rv;
+                    if (*rv == 0) {
+                        log_error_audit("is ok");
+                        break;
+                    }
+                    log_error_audit("next to check");
+                    sleep(5);
+                }
+
+                if (lastResult != 0) {
+                    std::string message = "`sudo systemctl list-ipm-units --active fty-db-init`"
+                        " failed (service is not currently active). Return value = '"
+                        + std::to_string (lastResult) + "', stderr = '" + proc_err1 + "'." ;
+                    log_error ("%s", message.c_str());
+                    log_error_audit("%s", message.c_str());
+                    std::string err =  TRANSLATE_ME ("Database schema was not installed or verified successfully");
+                    log_error_audit ("Request CREATE license FAILED");
+                    http_die ("internal-error", err.c_str ());
+                } else {
+                    // Not quite an error, but we want this message at the same logging level
+                    log_error ("NOTE: Although start-db-services script was killed, the fty-db-init service is okay");
+                }
+            }
+        }
+
+        // once done, check environment files for accessing the database
+        uint64_t tme_started = uint64_t(::time (NULL));
+        log_info ("db services were started by timestamp=%" PRIu64 ", re-reading password ...", tme_started);
+        int rv_dbcred = DBConn::dbreadcredentials ();
+        if (!rv_dbcred) {
+            std::string message;
+            if (rv_svc != 0) {
+                message = TRANSLATE_ME ("Database password file is missing AND failed to start start-db-services. Consult system logs");
+            } else {
+                message = TRANSLATE_ME ("Database password file is missing");
+            }
+            log_error ("%s", message.c_str ());
+            log_error_audit ("Request CREATE license FAILED");
+            http_die ("internal-error", message.c_str ());
+        }
+    } else {
+        // enforce reload of credentials, e.g. if timely service startup
+        // had failed previously but the system has caught up by now
+        uint64_t tme_started = uint64_t(::time (NULL));
+        log_info ("db services were already started and set up before timestamp=%" PRIu64 ", re-reading password just in case ...", tme_started);
+        if (!DBConn::dbreadcredentials ()) {
+            std::string err =  TRANSLATE_ME ("Database password file is missing");
+            log_error_audit ("Request CREATE license FAILED");
+            http_die ("internal-error", err.c_str ());
+        }
+    }
+
+    // Note: it may be that systemd lied about service states above, and that the
+    // start-db-services ended prematurely but without error... before trying DB
+    // credentials, make sure the touch-file from server_status.ecpp does exist.
+    // Note: if we do have credentials from above, at least fty-db-init had begun
+    // its job... (FIXME: Move code up in case fty-db-init failed a lifetime ago?)
+
+    {
+        /* Check whether database has started and initialized yet */
+        struct stat db_stat;
+        char *database_ready_file = get_current_db_initialized_file();
+        if (!database_ready_file) {
+            log_error("Out of memory!");
+            http_die ("internal-error", "Out of memory!");
+        }
+        log_debug("database_ready_file='%s'", database_ready_file);
+
+        /* Stat returns 0 on success */
+        while (0 != stat(database_ready_file, &db_stat)) {
+            // Note: after 10 mins wait tntnet may kill the "hung" loop
+            // and/or the appserver. The database really should be up by
+            // then and maybe it just does not see it (shifted /tmp etc...)
+            log_debug("Database is not ready, stat errno[%d]: %s, wait 3 sec\n", errno, strerror(errno));
+            usleep(3000);
+        }
+        free (database_ready_file); database_ready_file = NULL;
+        // Go on to check connectivity below
+    }
+
+</%cpp>
+{ "success" : "License version <$ clv $> accepted." }
+<%cpp>
+    log_info ("license was accepted, db services were started, db credentials were refreshed");
+    log_debug ("Current DB URL is: %s", DBConn::url.c_str ());
+
+    uint64_t tme_dbcheck = uint64_t(::time (NULL));
+    log_info ("Making sure webserver can already connect to database after timestamp=%" PRIu64 " ...", tme_dbcheck);
+    // Note: if we earlier failed to dbreadcredentials () and have no envvars
+    // set in the tntnet process now (DB_USER, DB_PASSWD), the mysql/mariadb
+    // client library will fall back to reading $HOME/.my.cnf and normally
+    // would not find it (we don't create one), but even if it did - the
+    // default database URL we hardcode refers to logging in as the "root"
+    // account of the DBMS, so credentials from .my.cnf are not used in fact.
+
+    try {
+        tntdb::Connection conn;
+        conn = tntdb::connect(DBConn::url);
+
+        tntdb::Statement st = conn.prepare(
+
+            " SELECT * from t_empty"
+//            " SHOW databases"
+        );
+
+        tntdb::Result result = st.select ();
+        for ( auto &row: result )
+        {
+            std::string ret;
+            row[0].get (ret);
+        }
+        database_ready = true;
+    } catch (std::exception &e) {
+        // TODO: Check/evaluate accessibility of /run namespace and
+        // restart myself like `kill (getpid ())` if there are issues?
+        uint64_t tme_dbfail = uint64_t(::time (NULL));
+        log_error ("Database connection test failed at timestamp=%" PRIu64 ": %s", tme_dbfail, e.what ());
+        database_ready = false;
+        std::string err =  TRANSLATE_ME ("Database connection test failed");
+        log_error_audit ("Request CREATE license FAILED");
+        http_die ("internal-error", err.c_str ());
+    }
+    uint64_t tme_dbconnok = uint64_t(::time (NULL));
+    log_info ("Successfully checked that webserver can connect to database after timestamp=%" PRIu64 " ...", tme_dbconnok);
+    log_info_audit ("Request CREATE license SUCCESS");
+}
+</%cpp>

@@ -120,7 +120,7 @@ stobiosf (const std::string& string, int32_t& integer, int8_t& scale) {
     if (fraction_size - 1 > std::numeric_limits<int8_t>::max ()) {
         return false;
     }
-    scale = -fraction_size;
+    scale = int8_t(-fraction_size);
     integer = static_cast <int32_t> (sum);
     return true;
 }

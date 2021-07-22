@@ -1,0 +1,251 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ \file alert_rules.ecpp
+ \author Karol Hrdina <KarolHrdina@Eaton.com>
+ \brief  Create or updates specified alert rule
+*/
+#><%pre>
+#include <exception>
+#include <cxxtools/jsondeserializer.h>
+#include <cxxtools/regex.h>
+#include <vector>
+#include <string>
+#include <malamute.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <fty_common_rest_helpers.h>
+#include <fty_common_macros.h>
+#include <fty_common_mlm_utils.h>
+#include <fty_common_mlm_guards.h>
+#include <fty_common_agents.h>
+#include <fty_common_rest_audit_log.h>
+
+</%pre>
+<%request scope="global">
+UserInfo user;
+</%request>
+<%cpp>
+std::string checked_name;
+std::string name = request.getArg ("name");
+{
+    // check user permissions
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Admin,     "CU"}
+            };
+    std::string audit_msg;
+    if (request.getMethod () == "PUT") {
+        audit_msg = "Request CREATE OR UPDATE alert rule FAILED";
+    } else if (request.getMethod () == "POST") {
+        audit_msg = "Request CREATE alert rule FAILED";
+    }
+    CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.empty () ? nullptr : audit_msg.c_str ());
+
+    // sanity check
+    if (request.getMethod () != "POST" && request.getMethod () != "PUT") {
+        http_die ("method-not-allowed", request.getMethod ().c_str ());
+    }
+
+    if (request.getMethod () == "PUT")
+    {
+        http_errors_t errors;
+        if (! check_alert_rule_name ("name", name, errors)) {
+            log_error_audit ("Request CREATE OR UPDATE alert rule named %s FAILED", name.c_str ());
+            http_die_error (errors);
+        }
+    }
+    checked_name = name;
+
+    if (request.getMethod () == "PUT" && name.empty () ) {
+        std::string received = TRANSLATE_ME ("empty value");
+        std::string expected = TRANSLATE_ME ("non-empty value");
+        log_error_audit ("Request CREATE OR UPDATE alert rule FAILED");
+        http_die ("request-param-bad", "name", received.c_str (), expected.c_str ());
+    }
+    if (request.getMethod () == "POST" && !name.empty ()) {
+        return DECLINED;
+    }
+    // sanity check end
+}
+
+log_debug ("method = '%s'.", request.getMethod ().c_str ());
+log_debug ("requested rule name = '%s'.", checked_name.c_str ());
+
+// connect to malamute
+MlmClientGuard client (mlm_client_new ());
+if (!client) {
+    log_fatal ("mlm_client_new () failed.");
+    std::string err =  TRANSLATE_ME ("mlm_client_new () failed.");
+    log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+
+std::string client_name = utils::generate_mlm_client_id ("web.alert_rules");
+log_debug ("malamute client name = '%s'.", client_name.c_str ());
+
+uint32_t connect_timeout = 1000; // ms
+int rv = mlm_client_connect (client, MLM_ENDPOINT, connect_timeout, client_name.c_str ());
+if (rv == -1) { // if failed, retry with larger timeout
+    connect_timeout += 1000;
+    rv = mlm_client_connect (client, MLM_ENDPOINT, connect_timeout, client_name.c_str ());
+}
+if (rv == -1) {
+    log_fatal ("mlm_client_connect (endpoint = '%s', timeout = '%d', address = '%s') failed.",
+                    MLM_ENDPOINT, connect_timeout, client_name.c_str ());
+    std::string err =  TRANSLATE_ME ("mlm_client_connect () failed.");
+    log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+
+// prepare rfc-evaluator-rules ADD message
+zmsg_t *send_msg = zmsg_new ();
+if (!send_msg) {
+    log_fatal ("zmsg_new () failed.");
+    std::string err =  TRANSLATE_ME ("zmsg_new () failed.");
+    log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+zmsg_addstr (send_msg, "ADD");
+zmsg_addstr (send_msg, request.getBody ().c_str ());
+if (request.getMethod () == "PUT") {
+    zmsg_addstr (send_msg, checked_name.c_str ());
+}
+
+// is it flexible
+cxxtools::Regex reg ("^[[:blank:][:cntrl:]]*\\{[[:blank:][:cntrl:]]*\"flexible\"", REG_EXTENDED);
+
+const char *dest = "fty-alert-engine";
+if (reg.match (request.getBody ())) dest = "fty-alert-flexible";
+
+// send it
+if (mlm_client_sendto (client, dest, "rfc-evaluator-rules", NULL, 1000, &send_msg) != 0) {
+    log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
+        dest, "rfc-evaluator-rules", 1000);
+    zmsg_destroy (&send_msg);
+    std::string err =  TRANSLATE_ME ("mlm_client_sendto () failed.");
+    log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+
+
+// wait for the right message or time-out
+ZmsgGuard recv_msg;
+ZpollerGuard poller (zpoller_new (mlm_client_msgpipe (client), NULL));
+if (!poller) {
+    log_fatal ("zpoller_new () failed.");
+    std::string err =  TRANSLATE_ME ("zpoller_new () failed.");
+    log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+
+while (true) {
+    zsock_t *which = static_cast<zsock_t*>(zpoller_wait (poller, 5000));
+    if (which) {
+        recv_msg = mlm_client_recv (client);
+    }
+    if (!recv_msg) {
+        if (zpoller_expired (poller) || zpoller_terminated (poller)) {
+            log_error ("zpoller_wait (timeout = 5000) timed out waiting for message.");
+            std::string err =  TRANSLATE_ME ("Timed out waiting for message.");
+            log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+            http_die ("internal-error", err.c_str ());
+        }
+        log_error ("mlm_client_recv () failed.");
+        std::string err =  TRANSLATE_ME ("mlm_client_recv () failed.");
+        log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+        http_die ("internal-error", err.c_str ());
+    }
+    if (streq (mlm_client_sender (client), dest))
+        break;
+}
+
+// Got it
+// Check subject
+if (!streq (mlm_client_subject (client), "rfc-evaluator-rules")) {
+    log_error ("Unexpected reply from '%s'. Subject expected = '%s', received = '%s'.",
+        mlm_client_sender (client), "rfc-evaluator-rules", mlm_client_subject (client));
+    std::string err =  TRANSLATE_ME ("Bad message.");
+    log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+// Check command. Can be OK or ERROR
+ZstrGuard part (zmsg_popstr (recv_msg));
+if (streq (part, "OK")) {
+    part = zmsg_popstr (recv_msg);
+    if (!part) {
+        log_error ("Unexpected reply from '%s'. Expected OK/json. Got OK/(null).", mlm_client_sender (client));
+        std::string err =  TRANSLATE_ME ("Bad message.");
+        log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+        http_die ("internal-error", err.c_str ());
+    }
+// Note: Assumption: EVALUATOR returns valid json
+</%cpp>
+<$$ part $>
+<%cpp>
+    log_info_audit ("Request %s alert rule named %s SUCCESS", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+    return HTTP_OK;
+}
+if (streq (part, "ERROR")) {
+    part = zmsg_popstr (recv_msg);
+    if (!part) {
+        log_error ("Unexpected reply from '%s'. Expected ERROR/reason. Got ERROR/(null).", mlm_client_sender (client));
+        std::string err =  TRANSLATE_ME ("Bad message.");
+        log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+        http_die ("internal-error", err.c_str ());
+    }
+    if (streq (part, "NOT_FOUND")) {
+        log_error ("Rule name '%s' does not exist.", checked_name.c_str ());
+        std::string err =  TRANSLATE_ME ("Rule name '%s'", checked_name.c_str ());
+        log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+        http_die ("not-found", err.c_str ());
+    }
+    if (streq (part, "BAD_LUA")) {
+        log_error ("Request document has lua syntax error.");
+        std::string err =  TRANSLATE_ME ("Request document has lua syntax error.");
+        log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+        http_die ("bad-request-document", err.c_str ());
+    }
+    if (streq (part, "BAD_JSON") || streq (part, "RULE_HAS_ERRORS")) {
+        log_error ("Request document not valid json or does not adhere to specified schema.");
+        std::string err =  TRANSLATE_ME ("Please check RFC-11 for valid rule json schema description.");
+        log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+        http_die ("bad-request-document", err.c_str ());
+    }
+    if (streq (part, "ALREADY_EXISTS")) {
+        std::string msg = TRANSLATE_ME ("Rule with such name (new rule name) already exists");
+        log_error ("%s", msg.c_str ());
+        log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+        http_die ("parameter-conflict", msg.c_str ());
+    }
+
+    log_error ("%s", part.get ());
+    std::string reason = part.get ();
+    std::string err =  TRANSLATE_ME ("Error while retrieving details of rule name = '%s': %s.", checked_name.c_str (), reason.c_str ());
+    log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+// Message does not conform to protocol
+log_error ("Unexptected reply from  '%s'. Does not conform to rfc-evaluator-rules.",
+    mlm_client_sender (client));
+std::string err = TRANSLATE_ME ("Bad message.");
+log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
+http_die ("internal-error", err.c_str ());
+</%cpp>

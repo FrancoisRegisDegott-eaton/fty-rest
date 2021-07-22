@@ -24,7 +24,7 @@
 #include <fty_common.h>
 #include <fty_common_macros.h>
 
-#include "monitor.h"
+#include "persist/monitor.h"
 
 // all fields called name
 #define MAX_NAME_LENGTH         50

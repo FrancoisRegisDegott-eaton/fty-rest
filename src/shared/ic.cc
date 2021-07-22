@@ -19,147 +19,136 @@
     =========================================================================
 */
 
-#include <stdlib.h>
-
-#ifndef _GNU_SOURCE
-# define _GNU_SOURCE
-# include <string.h>
-# undef _GNU_SOURCE
-#else
-# include <string.h>
-#endif
-
+#include "shared/ic.h"
+#include <ctype.h>
 #include <errno.h>
 #include <iconv.h>
-#include <ctype.h>
-#include "shared/ic.h"
+#include <stdlib.h>
+#include <string.h>
 
-static
-int s_convert(iconv_t id, char *inbuf, size_t *bytes, char *outbuf, size_t *capacity)
+static int s_convert(iconv_t id, char* inbuf, size_t* bytes, char* outbuf, size_t* capacity)
 {
     size_t converted;
 
     while (*bytes) {
-        converted = iconv (id, &inbuf, bytes, &outbuf, capacity);
-        if (converted == (size_t) -1) {
+        converted = iconv(id, &inbuf, bytes, &outbuf, capacity);
+        if (converted == size_t(-1)) {
             return errno;
         }
     }
     return 0;
 }
 
-char *ic_convert(char *buf, size_t bytes, const char *from, const char *to, size_t *outsize)
+char* ic_convert(char* buf, size_t bytes, const char* from, const char* to, size_t* outsize)
 {
-    if (outsize) *outsize = 0;
-    if (!buf || !bytes || !from) return NULL;
+    if (outsize)
+        *outsize = 0;
+    if (!buf || !bytes || !from)
+        return NULL;
 
     iconv_t iconv_cd;
 
-    if ((iconv_cd = iconv_open(to, from)) == (iconv_t) -1) {
+    if ((iconv_cd = iconv_open(to, from)) == iconv_t(-1)) {
         return NULL;
     }
 
     size_t allocated = bytes;
 
-    char *out = (char *) malloc (allocated);
-    if (! out) {
-        iconv_close (iconv_cd);
+    char* out = static_cast<char*>(malloc(allocated));
+    if (!out) {
+        iconv_close(iconv_cd);
         return NULL;
     }
-    size_t res = 0;
     size_t outlen;
 
     while (1) {
-        char *inbuf = buf;
-        char *outbuf = out;
-        size_t inlen = bytes;
-        outlen = allocated;
-        res = s_convert (iconv_cd, inbuf, &inlen, outbuf, &outlen);
+        char*  inbuf  = buf;
+        char*  outbuf = out;
+        size_t inlen  = bytes;
+        outlen        = allocated;
+        int res       = s_convert(iconv_cd, inbuf, &inlen, outbuf, &outlen);
         if (res == 0) {
             break;
         }
         if (errno == E2BIG) {
             // output buffer is short
             allocated += bytes;
-            char *p = (char *)realloc (out, allocated);
+            char* p = static_cast<char*>(realloc(out, allocated));
             if (!p) {
-                free (out);
+                free(out);
                 out = NULL;
                 break;
             }
             out = p;
         } else {
             // conversion error
-            free (out);
+            free(out);
             out = NULL;
             break;
         }
     }
     iconv_close(iconv_cd);
-    if (outsize) *outsize = allocated - outlen;
+    if (outsize)
+        *outsize = allocated - outlen;
     return out;
 }
 
-char *ic_utf8_to_ascii (char *string)
+char* ic_utf8_to_ascii(char* string)
 {
-    return ic_convert (string, strlen (string)+1, "UTF-8", "ASCII//TRANSLIT", NULL);
+    return ic_convert(string, strlen(string) + 1, "UTF-8", "ASCII//TRANSLIT", NULL);
 }
 
-char *ic_utf8_to_name (char *string, const char *assettype)
+char* ic_utf8_to_name(char* string, const char* assettype)
 {
-    if (!string) return NULL;
-    if (!assettype || strlen (assettype) == 0) assettype = "unknown";
+    if (!string)
+        return NULL;
+    if (!assettype || strlen(assettype) == 0)
+        assettype = "unknown";
 
-    char *ascii = ic_utf8_to_ascii (string);
-    if (!ascii) return strdup (assettype);
+    char* ascii = ic_utf8_to_ascii(string);
+    if (!ascii)
+        return strdup(assettype);
 
-    char *name = (char *) malloc (strlen (ascii) + strlen (assettype) + 2);
+    char* name = static_cast<char*>(malloc(strlen(ascii) + strlen(assettype) + 2));
     if (!name) {
-        free (ascii);
+        free(ascii);
         return NULL;
     }
 
     unsigned int i = 0;
     unsigned int j = 0;
     // name max size 40 -- keep space for -id
-    while (j < 40 - strlen (assettype)) {
-        if (ascii [i] == '\0') {
+    while (j < 40 - strlen(assettype)) {
+        if (ascii[i] == '\0') {
             // end of input string
             break;
         }
-        if (
-            (ascii [i] >= 'a' && ascii [i] <= 'z') ||
-            (ascii [i] >= 'A' && ascii [i] <= 'Z') ||
-            (ascii [i] >= '0' && ascii [i] <= '9')
-        ){
+        if ((ascii[i] >= 'a' && ascii[i] <= 'z') || (ascii[i] >= 'A' && ascii[i] <= 'Z') ||
+            (ascii[i] >= '0' && ascii[i] <= '9')) {
             // allowed characters (letters, numbers)
-            name [j] = tolower(ascii [i]);
+            name[j] = char(tolower(ascii[i]));
             ++j;
-        }
-        else {
+        } else {
             // replaced characters
-            if (strchr ("_- /\\.", ascii [i])) {
-                name [j++] = '.';
+            if (strchr("_- /\\.", ascii[i])) {
+                name[j++] = '.';
             }
         }
         ++i;
     }
     // sanitize also assettype (see "rack controller")
-    name [j++] = '-';
-    for (i = 0; i < strlen (assettype); ++i) {
-        if (
-            (assettype [i] >= 'a' && assettype [i] <= 'z') ||
-            (assettype [i] >= 'A' && assettype [i] <= 'Z') ||
-            (assettype [i] >= '0' && assettype [i] <= '9')
-        ) {
-            name [j++] = tolower (assettype [i]);
+    name[j++] = '-';
+    for (i = 0; i < strlen(assettype); ++i) {
+        if ((assettype[i] >= 'a' && assettype[i] <= 'z') || (assettype[i] >= 'A' && assettype[i] <= 'Z') ||
+            (assettype[i] >= '0' && assettype[i] <= '9')) {
+            name[j++] = char(tolower(assettype[i]));
         }
     }
-    name [j] = '\0';
-    free (ascii);
-    if (!name || strlen (name) == 0) {
-        zstr_free (&name);
-        return zsys_sprintf ("%s", assettype);
+    name[j] = '\0';
+    free(ascii);
+    if (!name || strlen(name) == 0) {
+        zstr_free(&name);
+        return zsys_sprintf("%s", assettype);
     }
     return name;
 }

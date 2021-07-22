@@ -1,0 +1,504 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ * \file config.ecpp
+ * \author Karol Hrdina <KarolHrdina@Eaton.com>
+ * \brief  implementation for REST api call to manipulate with
+ *         system configuration
+ */
+ #><%pre>
+#include <czmq.h>
+#include <string>
+#include <exception>
+#include <cstdlib>
+#include <mutex>
+#include <cxxtools/serializationinfo.h>
+#include <cxxtools/jsondeserializer.h>
+#include <cxxtools/jsonserializer.h>
+#include <cxxtools/regex.h>
+#include <fty_common_macros.h>
+#include <fty_common_rest_helpers.h>
+#include <fty_common_rest_utils_web.h>
+#include <fty_common_rest_audit_log.h>
+
+/**
+ * FIXME: Move that file into the file-system and maybe split it per components.
+ *
+ * fty-rest doesn't seem to have any way to simply drop files into the
+ * file-system, keep this in memory until that can be reworked.
+ */
+static const char* mapping = R"xxx(
+# FTY
+
+# compatibility
+BIOS_SNMP_COMMUNITY_NAME = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "snmp/community"
+language = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "server/language"
+
+# nut
+BIOS_NUT_POLLING_INTERVAL = ""
+    filepath = "/etc/fty-nut/fty-nut.cfg"
+    treepath = "nut/polling_interval"
+
+# agent-smtp
+BIOS_SMTP_SERVER = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/server"
+BIOS_SMTP_PORT = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/port"
+BIOS_SMTP_ENCRYPT = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/encryption"
+BIOS_SMTP_VERIFY_CA = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/verify_ca"
+BIOS_SMTP_USER = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/user"
+BIOS_SMTP_PASSWD = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/password"
+BIOS_SMTP_FROM = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/from"
+BIOS_SMTP_SMS_GATEWAY = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/smsgateway"
+BIOS_SMTP_USE_AUTHENTICATION = ""
+    filepath = "/etc/fty-email/fty-email.cfg"
+    treepath = "smtp/use_auth"
+
+# agent-ms
+BIOS_METRIC_STORE_AGE_RT = ""
+    filepath = "/etc/fty-metric-store/fty-metric-store.cfg"
+    treepath = "store/rt"
+BIOS_METRIC_STORE_AGE_15m = ""
+    filepath = "/etc/fty-metric-store/fty-metric-store.cfg"
+    treepath = "store/15m"
+BIOS_METRIC_STORE_AGE_30m = ""
+    filepath = "/etc/fty-metric-store/fty-metric-store.cfg"
+    treepath = "store/30m"
+BIOS_METRIC_STORE_AGE_1h = ""
+    filepath = "/etc/fty-metric-store/fty-metric-store.cfg"
+    treepath = "store/1h"
+BIOS_METRIC_STORE_AGE_8h = ""
+    filepath = "/etc/fty-metric-store/fty-metric-store.cfg"
+    treepath = "store/8h"
+BIOS_METRIC_STORE_AGE_24h = ""
+    filepath = "/etc/fty-metric-store/fty-metric-store.cfg"
+    treepath = "store/24h"
+BIOS_METRIC_STORE_AGE_7d = ""
+    filepath = "/etc/fty-metric-store/fty-metric-store.cfg"
+    treepath = "store/7d"
+BIOS_METRIC_STORE_AGE_30d = ""
+    filepath = "/etc/fty-metric-store/fty-metric-store.cfg"
+    treepath = "store/30d"
+
+# fty-discovery
+FTY_DISCOVERY_TYPE = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "discovery/type"
+FTY_DISCOVERY_SCANS = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "discovery/scans"
+FTY_DISCOVERY_IPS = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "discovery/ips"
+FTY_DISCOVERY_DOCUMENTS = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "discovery/documents"
+FTY_DISCOVERY_DEFAULT_VALUES_STATUS = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "defaultValuesAux/status"
+FTY_DISCOVERY_DEFAULT_VALUES_PRIORITY = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "defaultValuesAux/priority"
+FTY_DISCOVERY_DEFAULT_VALUES_PARENT = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "defaultValuesAux/parent"
+FTY_DISCOVERY_DEFAULT_VALUES_LINK_SRC = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "defaultValuesLinks/0/src"
+FTY_DISCOVERY_SCANS_DISABLED = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "disabled/scans_disabled"
+FTY_DISCOVERY_IPS_DISABLED = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "disabled/ips_disabled"
+FTY_DISCOVERY_PROTOCOLS = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "discovery/protocols"
+
+# fty-discovery parameters
+FTY_DISCOVERY_DUMP_POOL = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "parameters/maxDumpPoolNumber"
+FTY_DISCOVERY_SCAN_POOL = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "parameters/maxScanPoolNumber"
+FTY_DISCOVERY_SCAN_TIMEOUT = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "parameters/nutScannerTimeOut"
+FTY_DISCOVERY_DUMP_LOOPTIME = ""
+    filepath = "/etc/fty-discovery/fty-discovery.cfg"
+    treepath = "parameters/dumpDataLoopTime"
+
+# fty-session
+FTY_SESSION_TIMEOUT_NO_ACTIVITY = ""
+    filepath = "/etc/fty/fty-session.cfg"
+    treepath = "timeout/no_activity"
+FTY_SESSION_TIMEOUT_LEASE = ""
+    filepath = "/etc/fty/fty-session.cfg"
+    treepath = "timeout/lease_time"
+
+# IPM2
+
+# etn-graphite
+ETN_GRAPHITE_FREQUENCY = ""
+    filepath = "/etc/etn-graphite/etn-graphite.cfg"
+    treepath = "configuration/frequency"
+ETN_GRAPHITE_SERVER_ADDR = ""
+    filepath = "/etc/etn-graphite/etn-graphite.cfg"
+    treepath = "server/address"
+ETN_GRAPHITE_SERVER_PORT = ""
+    filepath = "/etc/etn-graphite/etn-graphite.cfg"
+    treepath = "server/port"
+ETN_GRAPHITE_BASENAME = ""
+    filepath = "/etc/etn-graphite/etn-graphite.cfg"
+    treepath = "configuration/basename"
+ETN_GRAPHITE_ACTIVATE = ""
+    filepath = "/etc/etn-graphite/etn-graphite.cfg"
+    treepath = "configuration/activated"
+
+# etn-automation
+ETN_AUTOMATION_NOTIF_EMAIL = ""
+    filepath = "/etc/fty/etn-automation.cfg"
+    treepath = "notifications"
+)xxx";
+
+// JSON <-> ZPL helpers
+
+/**
+ * FIXME: Pretend we have zconfig_remove().
+ *
+ * The following function requires zconfig_remove(), but this is a draft API
+ * and the version inside 42ity is old and buggy. Grant ourselves knowledge
+ * of the underlying struct and of the correct zconfig_remove() implementation.
+ *
+ * This is incredibly dirty and dangerous, but short of lobbying upstream to
+ * promote this API as stable and then upgrading 42ity's czmq, there's nothing
+ * that can be done about it.
+ */
+
+struct _zconfig_t {
+    char *name;                 //  Property name if any
+    char *value;                //  Property value, if any
+    struct _zconfig_t
+    *child,                     //  First child if any
+    *next,                      //  Next sibling if any
+    *parent;                    //  Parent if any
+    zlist_t *comments;          //  Comments if any
+    zfile_t *file;              //  Config file handle
+};
+
+#define freen(x) do {free(x); x = NULL;} while(0)
+
+void
+zconfig_remove_subtree (zconfig_t *self)
+{
+    assert (self);
+
+    //  Destroy all children
+    zconfig_destroy (&self->child);
+    self->child = NULL;
+}
+
+void
+zconfig_remove (zconfig_t **self_p)
+{
+    assert (self_p);
+
+    if (*self_p == NULL)
+        return;
+
+    zconfig_t *self = *self_p;
+
+    //  Destroy all children
+    zconfig_remove_subtree (self);
+
+    if (self->parent) {
+        if (self->parent->child == self) {
+           self->parent->child = self->next;
+        }
+        else {
+            zconfig_t *prev = self->parent->child;
+            while (prev->next != self) {
+                prev = prev->next;
+            }
+            prev->next = self->next;
+        }
+    }
+
+    //  Destroy other properties and then self
+    zlist_destroy (&self->comments);
+    zfile_destroy (&self->file);
+    freen (self->name);
+    freen (self->value);
+    freen (self);
+    *self_p = NULL;
+}
+
+void operator<<=(zconfig_t* root, const cxxtools::SerializationInfo& si) {
+    while (zconfig_child(root)) {
+        zconfig_t* childRoot = zconfig_child(root);
+        zconfig_remove(&childRoot);
+    }
+
+    std::string value;
+    size_t cpt = 0;
+
+    switch (si.category()) {
+        case cxxtools::SerializationInfo::Void:
+            zconfig_set_value(root, nullptr);
+            break;
+
+        case cxxtools::SerializationInfo::Value:
+            si.getValue(value);
+            zconfig_set_value(root, "%s", value.c_str());
+            break;
+
+        case cxxtools::SerializationInfo::Object:
+            // FIXME: Add a '= ""' to the entry, should correct augeas lens.
+            zconfig_set_value(root, "%s", "");
+
+            for (const auto& childSi : si) {
+                zconfig_new(childSi.name().c_str(), root) <<= childSi;
+            }
+            break;
+
+        case cxxtools::SerializationInfo::Array:
+            // FIXME: Add a '= ""' to the entry, should correct augeas lens.
+            zconfig_set_value(root, "%s", "");
+
+            for (const auto& childSi : si) {
+                zconfig_new(std::to_string(cpt++).c_str(), root) <<= childSi;
+            }
+            break;
+    }
+}
+
+void operator<<=(cxxtools::SerializationInfo& si, zconfig_t* root) {
+    if (zconfig_child(root) == nullptr) {
+        const char* value = zconfig_value(root);
+        if (!value) {
+            si.setNull();
+        }
+        else {
+            try {
+                size_t pos = 0;
+                si.setValue(std::stoi(value, &pos));
+                if (pos != strlen(value)) {
+                    si.setValue(value);
+                }
+            }
+            catch (std::invalid_argument& e) {
+                si.setValue(value);
+            }
+        }
+    }
+    else {
+        bool isArray = true;
+        size_t cpt = 0;
+        for (zconfig_t* childRoot = zconfig_child(root); childRoot; childRoot = zconfig_next(childRoot)) {
+            if (std::to_string(cpt++) != zconfig_name(childRoot)) {
+                isArray = false;
+                break;
+            }
+        }
+
+        for (zconfig_t* childRoot = zconfig_child(root); childRoot; childRoot = zconfig_next(childRoot)) {
+            si.addMember(isArray ? "" : zconfig_name(childRoot)) <<= childRoot;
+        }
+        si.setCategory(isArray ? cxxtools::SerializationInfo::Array : cxxtools::SerializationInfo::Object);
+    }
+}
+
+using ConfigEntry = std::pair<std::string, std::string>;
+using ConfigMap = std::map<std::string, ConfigEntry>;
+
+cxxtools::SerializationInfo loadConfig(const ConfigMap& configMap, const std::string& key) {
+    auto it = configMap.find(key);
+    if (it == configMap.end()) {
+        bios_throw("element-not-found", key.c_str());
+    }
+
+    zconfig_t* root = zconfig_load(it->second.first.c_str());
+    if (!root) {
+        bios_throw("element-not-found", it->second.first.c_str());
+    }
+
+    zconfig_t* child = zconfig_locate(root, it->second.second.c_str());
+    if (!child) {
+        zconfig_destroy(&root);
+        bios_throw("element-not-found", it->second.second.c_str());
+    }
+
+    cxxtools::SerializationInfo si;
+    si <<= child;
+    si.setName("value");
+
+    zconfig_destroy(&root);
+    return si;
+}
+
+void saveConfig(const ConfigMap& configMap, const std::string& key, const cxxtools::SerializationInfo& in) {
+    auto it = configMap.find(key);
+    if (it == configMap.end()) {
+        bios_throw("element-not-found", key.c_str());
+    }
+
+    zconfig_t* root = zconfig_load(it->second.first.c_str());
+    if (!root) {
+        bios_throw("element-not-found", it->second.first.c_str());
+    }
+
+    zconfig_t* child = zconfig_locate(root, it->second.second.c_str());
+    if (!child) {
+        /**
+         * FIXME: Entry is missing, force its creation.
+         *
+         * We should not have to do that, but etn-graphite doesn't have a
+         * server/address entry in its config file, among other things...
+         */
+        zconfig_put(root, it->second.second.c_str(), "");
+        child = zconfig_locate(root, it->second.second.c_str());
+    }
+
+    child <<= in;
+    int r = zconfig_save(root, it->second.first.c_str());
+    zconfig_destroy(&root);
+
+    if (r != 0) {
+        bios_throw("internal-error", (std::string("Failed to save file ") + it->second.first).c_str());
+    }
+}
+
+ConfigMap loadMapping(zconfig_t* root) {
+    ConfigMap result;
+
+    for (zconfig_t* childRoot = zconfig_child(root); childRoot; childRoot = zconfig_next(childRoot)) {
+        result.emplace(zconfig_name(childRoot), ConfigEntry(
+            zconfig_get(childRoot, "filepath", nullptr),
+            zconfig_get(childRoot, "treepath", nullptr)
+        ));
+    }
+
+    return result;
+}
+
+</%pre>
+<%application scope="page">
+    std::mutex config_mux;
+</%application>
+<%request scope="global">
+UserInfo user;
+</%request>
+<%cpp>
+{
+    // check user permissions
+    static const std::map <BiosProfile, std::string> PERMISSIONS =
+    {
+        { BiosProfile::Admin,     "CR" }
+    };
+
+    std::string audit_msg;
+    if (request.getMethod () == "POST")
+        audit_msg = std::string ("Request CREATE config FAILED");
+    CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.empty () ? nullptr : audit_msg.c_str ());
+
+    zconfig_t* mappingZconfig = zconfig_str_load(mapping);
+    ConfigMap mapping = loadMapping(mappingZconfig);
+    zconfig_destroy(&mappingZconfig);
+
+    try {
+        ///////////////////
+        ///     GET     ///
+        ///////////////////
+        if (request.isMethodGET ()) {
+            std::string key = qparam.param ("key");
+            if (key.empty()) {
+                bios_throw ("request-param-required", "key");
+            }
+            cxxtools::JsonSerializer serializer (reply.out ());
+            serializer.beautify (true);
+
+            cxxtools::SerializationInfo si;
+            cxxtools::SerializationInfo configSi;
+            configSi.setName("config");
+            configSi.addMember("key") <<= key;
+            configSi.addMember("") <<= loadConfig(mapping, key); // "value" key added inside loadConfig()
+            si.addMember("") <<= configSi;
+
+            serializer.serialize (si).finish ();
+            return HTTP_OK;
+        }
+
+        ////////////////////
+        ///     POST      //
+        ////////////////////
+        else if (request.isMethodPOST ()) {
+            std::stringstream input (request.getBody (), std::ios_base::in);
+            cxxtools::JsonDeserializer deserializer (input);
+            cxxtools::SerializationInfo request_doc;
+            deserializer.deserialize (request_doc);
+
+            if (request_doc.category() != cxxtools::SerializationInfo::Object) {
+                bios_throw("bad-request-document", "Request document must be an object.");
+            }
+
+            std::lock_guard<std::mutex> lock (config_mux);
+            for (const auto& si : request_doc) {
+                saveConfig(mapping, si.name(), si);
+            }
+</%cpp>
+{}
+<%cpp>
+            log_info_audit ("Request CREATE config SUCCESS");
+            return HTTP_OK;
+        }
+    }
+    catch (const BiosError &e) {
+        if (request.isMethodPOST ()) {
+            log_error_audit ("Request CREATE config FAILED");
+        }
+        http_die_idx(int64_t(e.idx), e.what ());
+    }
+    catch (const cxxtools::SerializationError &e) {
+        if (request.isMethodPOST ()) {
+            log_error_audit ("Request CREATE config FAILED");
+        }
+        http_die ("bad-request-document", e.what ());
+    }
+}
+</%cpp>

@@ -1,0 +1,172 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ \file alert_rules_detail.ecpp
+ \author Karol Hrdina <KarolHrdina@Eaton.com>
+ \brief Return detailed information about specified alert rule
+*/
+#><%pre>
+#include <cxxtools/jsondeserializer.h>
+#include <vector>
+#include <string>
+#include <malamute.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fty_common_rest_helpers.h>
+#include <fty_common_macros.h>
+#include <fty_common_mlm_utils.h>
+#include <fty_common_mlm_guards.h>
+</%pre>
+<%request scope="global">
+UserInfo user;
+</%request>
+<%cpp>
+std::string checked_name;
+{
+    // check user permissions
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+            {BiosProfile::Dashboard, "R"},
+            {BiosProfile::Admin,     "R"}
+            };
+    CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
+
+    // sanity check
+    if (!request.isMethodGET ())
+        http_die ("method-not-allowed", request.getMethod ().c_str ());
+
+    std::string name = request.getArg ("name");
+
+    http_errors_t errors;
+    if (!check_alert_rule_name ("name", name, errors)) {
+        http_die_error (errors);
+    }
+    checked_name = name;
+    // sanity check end
+}
+
+log_debug ("requested rule name = '%s'.", checked_name.c_str ());
+// connect to malamute
+MlmClientGuard client(mlm_client_new ());
+if (!client) {
+    log_fatal ("mlm_client_new() failed.");
+    http_die ("internal-error", "mlm_client_new() failed.");
+}
+
+std::string client_name = utils::generate_mlm_client_id("web.alert_rules_detailed");
+log_debug ("malamute client name = '%s'.", client_name.c_str ());
+
+int rv = mlm_client_connect (client, MLM_ENDPOINT, 1000, client_name.c_str ());
+if (rv == -1) {
+    log_fatal ("mlm_client_connect (endpoint = '%s', timeout = '%d', address = '%s') failed.",
+                    MLM_ENDPOINT, 1000, client_name.c_str ());
+    std::string err =  TRANSLATE_ME ("mlm_client_connect() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+
+// prepare rfc-evaluator-rules GET message
+zmsg_t *send_msg = zmsg_new ();
+if (!send_msg) {
+    log_fatal ("zmsg_new() failed.");
+    std::string err =  TRANSLATE_ME ("zmsg_new() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+zmsg_addstr (send_msg, "GET");
+zmsg_addstr (send_msg, checked_name.c_str ());
+
+// send it
+if (mlm_client_sendto (client, "fty-alert-engine", "rfc-evaluator-rules", NULL, 1000, &send_msg) != 0) {
+    log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
+        "fty-alert-engine", "rfc-evaluator-rules", 1000);
+    zmsg_destroy (&send_msg);
+    std::string err =  TRANSLATE_ME ("mlm_client_sendto() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+
+ZmsgGuard recv_msg;
+ZpollerGuard poller(zpoller_new (mlm_client_msgpipe (client), NULL));
+if (!poller) {
+    log_fatal ("zpoller_new() failed.");
+    std::string err =  TRANSLATE_ME ("zpoller_new() failed.");
+    http_die ("internal-error", err.c_str ());
+}
+while (true) {
+    zsock_t *which = static_cast<zsock_t*>(zpoller_wait(poller, 5000));
+    if (which) {
+        recv_msg = mlm_client_recv (client);
+    }
+    if (!recv_msg) {
+        if (zpoller_expired (poller)) {
+            log_error ("zpoller_wait(timeout = 5000) timed out waiting for message.");
+            std::string err =  TRANSLATE_ME ("Timed out waiting for message.");
+            http_die ("internal-error", err.c_str ());
+        }
+        log_error ("mlm_client_recv() failed.");
+        std::string err =  TRANSLATE_ME ("mlm_client_recv() failed.");
+        http_die ("internal-error", err.c_str ());
+    }
+    if (streq (mlm_client_sender (client), "fty-alert-engine"))
+        break;
+}
+// Got it
+// Check subject
+if (!streq (mlm_client_subject (client), "rfc-evaluator-rules")) {
+    log_error ("Unexpected reply from '%s'. Subject expected = '%s', received = '%s'.",
+        mlm_client_sender (client), "rfc-evaluator-rules", mlm_client_subject (client));
+    std::string err =  TRANSLATE_ME ("Bad message.");
+    http_die ("internal-error", err.c_str ());
+}
+// Check command. Can be OK or ERROR
+ZstrGuard part (zmsg_popstr (recv_msg));
+if (streq (part, "OK")) {
+    part = zmsg_popstr (recv_msg);
+    if (!part) {
+        log_error ("Unexpected reply from '%s'. Expected OK/json. Got OK/(null).", mlm_client_sender (client));
+        std::string err =  TRANSLATE_ME ("Bad message.");
+        http_die ("internal-error", err.c_str ());
+    }
+// Note: Assumption: EVALUATOR returns valid json
+</%cpp>
+<$$ part $>
+<%cpp>
+    return HTTP_OK;
+}
+if (streq (part, "ERROR")) {
+    part = zmsg_popstr (recv_msg);
+    if (!part) {
+        log_error ("Unexpected reply from '%s'. Expected ERROR/reason. Got ERROR/(null).", mlm_client_sender (client));
+        std::string err =  TRANSLATE_ME ("Bad message.");
+        http_die ("internal-error", err.c_str ());
+    }
+    if (streq (part, "NOT_FOUND")) {
+        log_error ("Rule name '%s' does not exist.", checked_name.c_str ());
+        std::string err =  TRANSLATE_ME ("Rule name '%s'", checked_name.c_str ());
+        http_die ("not-found", err.c_str ());
+    }
+    log_error ("%s", part.get());
+    std::string reason = part.get();
+    std::string err =  TRANSLATE_ME ("Error while retrieving details of rule name = '%s': %s.", checked_name.c_str (), reason.c_str ());
+    http_die ("internal-error", err.c_str ());
+}
+// Message does not conform to protocol
+log_error ("Unexptected reply from  '%s'. Does not conform to rfc-evaluator-rules.",
+    mlm_client_sender (client));
+std::string err =  TRANSLATE_ME ("Bad message.");
+http_die ("internal-error", err.c_str ());
+</%cpp>

@@ -18,8 +18,9 @@
  *
  */
 
-#include "persist_error.h"
 #include <fty_common_macros.h>
+
+#include "persist/persist_error.h"
 
 namespace bios
 {
