@@ -129,13 +129,13 @@ augtool* augtool::get_instance() {
 
 augtool::augtool()
 {
-    logDebug("new Process");
+    log_debug("new Process");
     prc = new fty::Process("sudo", {"augtool", "-S", "-I/usr/share/fty/lenses", "-e"});
 
     if(!prc->exists()) {
-        logDebug("Proc not exits");
+        log_debug("Proc not exits");
         if (prc->run()) {
-            logDebug("run process");
+            log_debug("run process");
             std::string nil = get_cmd_out_raw("help");
             if(nil.find("match") == nil.npos) {
                 delete prc;

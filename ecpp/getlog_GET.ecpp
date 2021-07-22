@@ -658,6 +658,17 @@ UserInfo user;
                 if (access(data.filePath.c_str(), F_OK) != -1) {
                     if (cp.empty()) cp = "cp";
                     cp.append(" ").append(data.filePath);
+
+                    // rotated logfile exceptions
+                    if (   (std::string::npos != data.filePath.find("www-audit.log"))
+                        || (std::string::npos != data.filePath.find("alarms-audit.log"))
+                        || (std::string::npos != data.filePath.find("metrics-audit.log"))
+                        || (std::string::npos != data.filePath.find("etn-mass-management.audit.log"))
+                        || (std::string::npos != data.filePath.find("verify-fs.log"))
+                        || (std::string::npos != data.filePath.find("karaf.log"))
+                    ){
+                        cp.append("*"); // cp <filePath>*
+                    }
                 }
             }
             if (cp.empty()) {
@@ -682,9 +693,13 @@ UserInfo user;
                 r = system(cp.c_str());
                 log_debug("%s (r: %d)", cp.c_str(), r);
                 if (r != 0) {
+                    log_error("cp command failed (%s)", strerror(errno));
+                    r = 0; // don't die on cp error (Permission denied)
+                }
+                if (r != 0) {
+                    log_error ("cp failed (r: %d, %s)", r, strerror(errno));
                     if (0 != system(rmdir.c_str())) { log_warning("'%s' failed", rmdir.c_str()); }
                     for (auto& file : temp_logfiles) { remove(file.c_str()); }
-                    log_error ("%s failed (r: %d)", cp.c_str(), r);
                     std::string err = "cp command has failed.";
                     http_die( "internal-error", err.c_str ());
                 }
