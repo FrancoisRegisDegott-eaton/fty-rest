@@ -132,7 +132,7 @@ bool database_ready;
             std::string err =  TRANSLATE_ME ("Connecting to database failed.");
             http_die ("internal-error", err.c_str ());
         }
-        element_id = (uint32_t) dbid;
+        element_id = static_cast<uint32_t>(dbid); // assume dbid > 0
     }
 
 std::map<std::string, int> desired_elements;
@@ -237,7 +237,7 @@ if (!poller) {
     http_die ("internal-error", err.c_str ());
 }
 while (true) {
-    zsock_t *which = (zsock_t *) zpoller_wait (poller, 5000);
+    zsock_t *which = static_cast<zsock_t *>(zpoller_wait (poller, 5000));
     if (which) {
         recv_msg = mlm_client_recv (client);
     }
