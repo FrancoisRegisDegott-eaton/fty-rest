@@ -467,7 +467,7 @@ int process_basename_export (const std::string& basename, const std::string& log
             return -1;
         }
     }
-	else if (basename == "ip-interfaces") {
+    else if (basename == "ip-interfaces") {
         // build logfile using network interfaces configuration
         int r = exec_ip_interfaces_command(logfile);
         if (r != 0) {
@@ -559,7 +559,7 @@ UserInfo user;
         std::string filePath; // fs access
     } const logsData[] = {
     // logfiles
-        { "www-audit",      bALL | bFCT, true,  "/var/log/tntnet/www-audit.log" },
+        { "www-audit",      bALL | bFCT, true,  "/var/log/app-audit/www-audit.log" },
         { "alarms-audit",   bALL | bFCT, true,  "/var/log/app-audit/alarms-audit.log" },
         { "metrics-audit",  bALL | bFCT, true,  "/var/log/app-audit/metrics-audit.log" },
         { "email-audit",    bALL | bFCT, true,  "/var/log/app-audit/email-audit.log" },
