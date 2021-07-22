@@ -663,6 +663,7 @@ UserInfo user;
                     if (   (std::string::npos != data.filePath.find("www-audit.log"))
                         || (std::string::npos != data.filePath.find("alarms-audit.log"))
                         || (std::string::npos != data.filePath.find("metrics-audit.log"))
+                        || (std::string::npos != data.filePath.find("email-audit.log"))
                         || (std::string::npos != data.filePath.find("etn-mass-management.audit.log"))
                         || (std::string::npos != data.filePath.find("verify-fs.log"))
                         || (std::string::npos != data.filePath.find("karaf.log"))
@@ -696,7 +697,7 @@ UserInfo user;
                     log_error("cp command failed (%s)", strerror(errno));
                     r = 0; // don't die on cp error (Permission denied)
                 }
-                if (r != 0) {
+                if (r != 0) { // dead code kept
                     log_error ("cp failed (r: %d, %s)", r, strerror(errno));
                     if (0 != system(rmdir.c_str())) { log_warning("'%s' failed", rmdir.c_str()); }
                     for (auto& file : temp_logfiles) { remove(file.c_str()); }
