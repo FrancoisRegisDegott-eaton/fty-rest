@@ -387,6 +387,34 @@ int exec_ps_command (const std::string& logfile)
     return r;
 }
 
+// ip logs export to logfile
+int exec_ip_command (const std::string& param, const std::string& logfile)
+{
+    std::stringstream ss;
+    ss << "/bin/ip " << param << " > " << logfile;
+    std::string cmd = ss.str();
+
+    log_debug("running ip command to generate %s", logfile.c_str());
+    int r = system(cmd.c_str());
+    if (r != 0) log_error("ip command returns %d ", r);
+    else log_debug("ip command returns %d ", r);
+
+    return r;
+}
+
+// network interfaces logs export to logfile
+int exec_ip_interfaces_command (const std::string& logfile)
+{
+    std::string cmd = "cp /etc/network/interfaces " + logfile;
+
+    log_debug("copy network interfaces to %s", logfile.c_str());
+    int r = system(cmd.c_str());
+    if (r != 0) log_error("copy network interfaces command returns %d ", r);
+    else log_debug("copy network interfaces command returns %d ", r);
+
+    return r;
+}
+
 // curl http req. export to logfile
 int exec_curl_command (const std::string& method, const std::string& url, const std::string& logfile)
 {
@@ -420,6 +448,30 @@ int process_basename_export (const std::string& basename, const std::string& log
         int r = exec_ps_command(logfile);
         if (r != 0) {
             errMsg = "ps command has failed (basename: " + basename + ")";
+            return -1;
+        }
+    }
+    else if (basename == "ip-addr") {
+        // build logfile using ip addr export
+        int r = exec_ip_command("addr", logfile);
+        if (r != 0) {
+            errMsg = "ip addr command has failed (basename: " + basename + ")";
+            return -1;
+        }
+    }
+    else if (basename == "ip-route") {
+        // build logfile using ip route export
+        int r = exec_ip_command("route", logfile);
+        if (r != 0) {
+            errMsg = "ip addr command has failed (basename: " + basename + ")";
+            return -1;
+        }
+    }
+	else if (basename == "ip-interfaces") {
+        // build logfile using network interfaces configuration
+        int r = exec_ip_interfaces_command(logfile);
+        if (r != 0) {
+            errMsg = "interfaces command has failed (basename: " + basename + ")";
             return -1;
         }
     }
@@ -516,12 +568,16 @@ UserInfo user;
         { "emc4j-audit",    bALL,        true,  "/var/log/etn-emc4j-ipm2/karaf.log" },
         { "release",        bALL,        true,  "/etc/release-details.json" },
         { "messages",       bALL,        true,  "/var/log/messages" },
+        { "firmwares",      bALL,        true,  "/var/lib/fty/etn-mass-management/firmwares.cfg" },
         { "emc4j-bundle",   bALL,        false, "/tmp/etn-emc4j-bundle.log" },  // curl export
         { "emc4j-jdbc",     bALL,        false, "/tmp/etn-emc4j-jdbc.log" },
         { "emc4j-http",     bALL,        false, "/tmp/etn-emc4j-http.log" },
         { "journald-3h",    bALL,        false, "/tmp/journald-3h.log" },       // journalctl export
         { "journald-all",   bALL,        false, "/tmp/journald-all.log" },
         { "processes",      bALL,        false, "/tmp/processes.log" },         // ps export
+        { "ip-addr",        bALL,        false, "/tmp/ip-addr.log" },           // ip addr
+        { "ip-route",       bALL,        false, "/tmp/ip-route.log" },          // ip route
+        { "ip-interfaces",  bALL,        false, "/tmp/ip-interfaces.log" },     // ip interfaces
     // archives (archBitmask **MUST** be 0)
         { "ALL", 0, false, "/tmp/log_all.tar" }, // full archive, bALL logfiles above
         { "FCT", 0, false, "/tmp/log_fct.tar" }, // functional archive, bFCT logfiles above
