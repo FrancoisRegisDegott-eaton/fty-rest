@@ -541,43 +541,40 @@ UserInfo user;
     //  reply.setContentType("application/json;charset=UTF-8");
     // rituals if needed, so undecided callers like this one do not
 
-    // NOTE: At a later stage we might do other logs than pre-existing files -
-    // e.g. exports from journalctl, so logNAME and logFILE are logically and
-    // maybe functionally different beasts below...
-
     // archive bits def.
     enum {
         bALL = 1 << 0L, // full archive (maintenance report)
         bFCT = 1 << 1L, // functional archive (client report)
     };
 
-    // supported (baseName, archBitmask, isRealFile, filePath) tuples
+    // supported (baseName, archBitmask, isLogicalFile, filePath) tuples
     struct {
         std::string baseName;
         int archBitmask; // archive membership
-        bool isRealFile; // existing vs. command export
+        bool isLogicalFile; // logical file vs. command export
         std::string filePath; // fs access
     } const logsData[] = {
-    // logfiles
-        { "www-audit",      bALL | bFCT, true,  "/var/log/app-audit/www-audit.log" },
-        { "alarms-audit",   bALL | bFCT, true,  "/var/log/app-audit/alarms-audit.log" },
-        { "metrics-audit",  bALL | bFCT, true,  "/var/log/app-audit/metrics-audit.log" },
-        { "email-audit",    bALL | bFCT, true,  "/var/log/app-audit/email-audit.log" },
-        { "mass-mgr-audit", bALL | bFCT, true,  "/var/log/etn-mass-management/mass-management-audit.log" },
-        { "verify-fs",      bALL | bFCT, true,  "/var/log/verify-fs.log" },
-        { "emc4j-audit",    bALL,        true,  "/var/log/etn-emc4j-ipm2/karaf.log" },
-        { "release",        bALL,        true,  "/etc/release-details.json" },
-        { "messages",       bALL,        true,  "/var/log/messages" },
-        { "firmwares",      bALL,        true,  "/var/lib/fty/etn-mass-management/firmwares.cfg" },
-        { "emc4j-bundle",   bALL,        false, "/tmp/etn-emc4j-bundle.log" },  // curl export
-        { "emc4j-jdbc",     bALL,        false, "/tmp/etn-emc4j-jdbc.log" },
-        { "emc4j-http",     bALL,        false, "/tmp/etn-emc4j-http.log" },
-        { "journald-3h",    bALL,        false, "/tmp/journald-3h.log" },       // journalctl export
-        { "journald-all",   bALL,        false, "/tmp/journald-all.log" },
-        { "processes",      bALL,        false, "/tmp/processes.log" },         // ps export
-        { "ip-addr",        bALL,        false, "/tmp/ip-addr.log" },           // ip addr
-        { "ip-route",       bALL,        false, "/tmp/ip-route.log" },          // ip route
-        { "ip-interfaces",  bALL,        false, "/tmp/ip-interfaces.log" },     // ip interfaces
+    // logical logfiles
+        { "www-audit",          bALL | bFCT, true,  "/var/log/app-audit/www-audit.log" },
+        { "alarms-audit",       bALL | bFCT, true,  "/var/log/app-audit/alarms-audit.log" },
+        { "automation-audit",   bALL | bFCT, true,  "/var/log/app-audit/automation-audit.log" },
+        { "email-audit",        bALL | bFCT, true,  "/var/log/app-audit/email-audit.log" },
+        { "mass-mgr-audit",     bALL | bFCT, true,  "/var/log/etn-mass-management/mass-management-audit.log" },
+        { "verify-fs",          bALL | bFCT, true,  "/var/log/verify-fs.log" },
+        { "emc4j-audit",        bALL,        true,  "/var/log/etn-emc4j-ipm2/karaf.log" },
+        { "release",            bALL,        true,  "/etc/release-details.json" },
+        { "messages",           bALL,        true,  "/var/log/messages" },
+        { "firmwares",          bALL,        true,  "/var/lib/fty/etn-mass-management/firmwares.cfg" },
+    // cmd export to logfiles
+        { "emc4j-bundle",       bALL,        false, "/tmp/etn-emc4j-bundle.log" },  // curl export
+        { "emc4j-jdbc",         bALL,        false, "/tmp/etn-emc4j-jdbc.log" },
+        { "emc4j-http",         bALL,        false, "/tmp/etn-emc4j-http.log" },
+        { "journald-3h",        bALL,        false, "/tmp/journald-3h.log" },       // journalctl export
+        { "journald-all",       bALL,        false, "/tmp/journald-all.log" },
+        { "processes",          bALL,        false, "/tmp/processes.log" },         // ps export
+        { "ip-addr",            bALL,        false, "/tmp/ip-addr.log" },           // network export
+        { "ip-route",           bALL,        false, "/tmp/ip-route.log" },          //
+        { "ip-interfaces",      bALL,        false, "/tmp/ip-interfaces.log" },     //
     // archives (archBitmask **MUST** be 0)
         { "ALL", 0, false, "/tmp/log_all.tar" }, // full archive, bALL logfiles above
         { "FCT", 0, false, "/tmp/log_fct.tar" }, // functional archive, bFCT logfiles above
@@ -587,7 +584,7 @@ UserInfo user;
     std::string baseName;
     std::string baseName_ext;
     std::string baseName_logfile;
-    bool baseName_isRealFile = false;
+    bool baseName_isLogicalFile = false;
     bool baseName_isArchive = false;
     bool baseName_doEncryption = false;
     int baseName_archiveBit = 0;
@@ -651,7 +648,7 @@ UserInfo user;
             baseName = data.baseName; // found
             baseName_ext = in_logname_ext;
             baseName_logfile = data.filePath; // full path
-            baseName_isRealFile = data.isRealFile;
+            baseName_isLogicalFile = data.isLogicalFile;
             baseName_isArchive = (baseName == "ALL") || (baseName == "FCT");
             baseName_doEncryption = (baseName == "ALL"); // only encrypt. full arch.
 
@@ -700,7 +697,7 @@ UserInfo user;
                 if ((data.archBitmask & baseName_archiveBit) == 0)
                     continue; // logfile out of archive, or archive itself
 
-                if (!data.isRealFile) { // exported logfiles
+                if (!data.isLogicalFile) { // exported logfiles
                     std::string err;
                     int r1 = process_basename_export(data.baseName, data.filePath, err);
                     temp_logfiles.push_back(data.filePath);
@@ -718,7 +715,7 @@ UserInfo user;
                     // rotated logfile exceptions
                     if (   (std::string::npos != data.filePath.find("www-audit.log"))
                         || (std::string::npos != data.filePath.find("alarms-audit.log"))
-                        || (std::string::npos != data.filePath.find("metrics-audit.log"))
+                        || (std::string::npos != data.filePath.find("automation-audit.log"))
                         || (std::string::npos != data.filePath.find("email-audit.log"))
                         || (std::string::npos != data.filePath.find("etn-mass-management.audit.log"))
                         || (std::string::npos != data.filePath.find("verify-fs.log"))
@@ -780,7 +777,7 @@ UserInfo user;
             deleteLogfile = true;
             // here baseName_logfile was created (archive)
         }
-        else if (!baseName_isRealFile) { // exported logfiles
+        else if (!baseName_isLogicalFile) { // exported logfiles
             std::string err;
             int r = process_basename_export(baseName, baseName_logfile, err);
             if (r != 0) {
@@ -1003,7 +1000,7 @@ UserInfo user;
         reply.resetContent();
 
         // TODO: Use (define?) a dedicated exception class; maybe employ bios_throw
-        if (baseName_isRealFile && std::string{e.what()}.find( TRANSLATE_ME("Could not open requested logfile: ") ) != std::string::npos) {
+        if (baseName_isLogicalFile && std::string{e.what()}.find( TRANSLATE_ME("Could not open requested logfile: ") ) != std::string::npos) {
             http_die("not-found", baseName.c_str());
         }
         else {
