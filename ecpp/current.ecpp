@@ -233,17 +233,23 @@ std::vector<uint32_t> asset_ids;
                 continue;
             }
             for(auto &data1 : mresult) {
-                // TODO: non double values are not (yet) supported
-                // in this case, add value in another map for special treatment (for value of type string)
                 double dvalue = 0.0;
-                try {
-                  dvalue = std::stod (fty_proto_value (data1));
-                } catch (const std::exception& e) {
+                std::string item_name = fty_proto_type (data1);
+                // TODO: non double values are not (yet) supported
+                // Special treatment for battery status and battery charger status and battery alarm code (string values)
+                if( item_name == "status.battery" || item_name == "status.battery.charger" || item_name == "battery.alarm.code") {
                     // Save value in another map for special treatment
-                    str_measurements.emplace (std::make_pair (fty_proto_type (data1), fty_proto_value (data1)));
-                    log_warning ("fty_proto_value () returned a string that does not encode a double value: '%s'. Defaulting to 0.0 value.", fty_proto_value (data1));
+                    str_measurements.emplace (std::make_pair (item_name, fty_proto_value (data1)));
                 }
-                measurements.emplace (std::make_pair (fty_proto_type (data1), dvalue));
+                // Normal treatment
+                else {
+                    try {
+                      dvalue = std::stod (fty_proto_value (data1));
+                    } catch (const std::exception& e) {
+                        log_error ("fty_proto_value () returned a string that does not encode a double value: '%s'. Defaulting to 0.0 value.", fty_proto_value (data1));
+                    }
+                }
+                measurements.emplace (std::make_pair (item_name, dvalue));
             }
         }
 //        zuuid_t *uuid = zuuid_new ();
@@ -368,8 +374,9 @@ std::vector<uint32_t> asset_ids;
             {
                 siJson.addMember(one_measurement.first) <<= shared::upsstatus_to_string(uint16_t(one_measurement.second));
             }
-            // special treatment for battery status and battery charger status (string values)
-            else if( one_measurement.first == "status.battery" || one_measurement.first == "status.battery.charger")
+            // special treatment for battery status and battery charger status and battery alarm code (string values)
+            else if( one_measurement.first == "status.battery" || one_measurement.first == "status.battery.charger" ||
+                     one_measurement.first == "battery.alarm.code")
             {
                 // search string value previously saved
                 auto it = str_measurements.find(one_measurement.first);
