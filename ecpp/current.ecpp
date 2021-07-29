@@ -233,7 +233,6 @@ std::vector<uint32_t> asset_ids;
                 continue;
             }
             for(auto &data1 : mresult) {
-                double dvalue = 0.0;
                 std::string item_name = fty_proto_type (data1);
                 // TODO: non double values are not (yet) supported
                 // Special treatment for battery status and battery charger status and battery alarm code (string values)
@@ -243,13 +242,14 @@ std::vector<uint32_t> asset_ids;
                 }
                 // Normal treatment
                 else {
+                    double dvalue = 0.0;
                     try {
                       dvalue = std::stod (fty_proto_value (data1));
                     } catch (const std::exception& e) {
                         log_error ("fty_proto_value () returned a string that does not encode a double value: '%s'. Defaulting to 0.0 value.", fty_proto_value (data1));
                     }
+                    measurements.emplace (std::make_pair (item_name, dvalue));
                 }
-                measurements.emplace (std::make_pair (item_name, dvalue));
             }
         }
 //        zuuid_t *uuid = zuuid_new ();
@@ -374,19 +374,6 @@ std::vector<uint32_t> asset_ids;
             {
                 siJson.addMember(one_measurement.first) <<= shared::upsstatus_to_string(uint16_t(one_measurement.second));
             }
-            // special treatment for battery status and battery charger status and battery alarm code (string values)
-            else if( one_measurement.first == "status.battery" || one_measurement.first == "status.battery.charger" ||
-                     one_measurement.first == "battery.alarm.code")
-            {
-                // search string value previously saved
-                auto it = str_measurements.find(one_measurement.first);
-                if (it != str_measurements.end()) {
-                    siJson.addMember(one_measurement.first) <<= it->second;
-                }
-                else {
-                    log_error ("Value not found for %s", one_measurement.first.c_str());
-                }
-            }
             else if (one_measurement.first == "operatingStatus" )
             {
                 siJson.addMember(one_measurement.first) <<= s_os2string(one_measurement.second);
@@ -395,6 +382,12 @@ std::vector<uint32_t> asset_ids;
             {
                 siJson.addMember(one_measurement.first) <<= one_measurement.second;
             }
+        }
+
+        // then treatment of string values
+        for ( const auto &one_measurement : str_measurements )
+        {
+            siJson.addMember(one_measurement.first) <<= one_measurement.second;
         }
 
         // BIOS-951 -- begin
