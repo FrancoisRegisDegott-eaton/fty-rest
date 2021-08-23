@@ -70,9 +70,9 @@ static const std::map<std::string, const std::string> PARAM_TO_SRC {
     {"trend_power_last_week", "realpower.default_arithmetic_mean_7d/realpower.default"},
     {"trend_power_last_month", "realpower.default_arithmetic_mean_30d/realpower.default"},
 
-    {"avg_consumption_last_day", "realpower.default_consumption_mean_24h"},
-    {"avg_consumption_last_week", "realpower.default_consumption_mean_7d"},
-    {"avg_consumption_last_month", "realpower.default_consumption_mean_30d"},
+    {"consumption_last_day", "realpower.default_consumption_mean_24h"},
+    {"consumption_last_week", "realpower.default_consumption_mean_7d"},
+    {"consumption_last_month", "realpower.default_consumption_mean_30d"},
 
     {"temperature", "average.temperature"},
     {"avg_temperature_last_day",  "average.temperature_arithmetic_mean_24h"},
