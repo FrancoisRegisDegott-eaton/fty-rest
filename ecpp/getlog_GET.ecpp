@@ -717,7 +717,7 @@ UserInfo user;
                         || (std::string::npos != data.filePath.find("alarms-audit.log"))
                         || (std::string::npos != data.filePath.find("automation-audit.log"))
                         || (std::string::npos != data.filePath.find("email-audit.log"))
-                        || (std::string::npos != data.filePath.find("etn-mass-management.audit.log"))
+                        || (std::string::npos != data.filePath.find("mass-management-audit.log"))
                         || (std::string::npos != data.filePath.find("verify-fs.log"))
                         || (std::string::npos != data.filePath.find("karaf.log"))
                     ){
