@@ -26,7 +26,7 @@
     <mapping>
         <target>alert_assets_states_counter@libfty_rest</target>
         <method>GET</method>
-        <url>^/api/v1/alerts/assets_states_counter(\?[^/]+)?$</url>
+        <url>^/api/v1/alerts/assets-states-counter(\?[^/]+)?$</url>
     </mapping>
 
     <mapping>

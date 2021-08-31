@@ -121,7 +121,7 @@ bool database_ready;
         check_element_identifier_or_die ("element_id", element_id, checked_element_id);
         check_regex_text_or_die ("source", source, checked_source, "^[-_.@a-z0-9]{0,255}$");
         if (csv != "yes") {
-            check_regex_text_or_die ("type", type, checked_type, "^(arithmetic_mean|min|max|)$");
+            check_regex_text_or_die ("type", type, checked_type, "^(arithmetic_mean|min|max|consumption|)$");
             check_regex_text_or_die ("relative", relative, checked_relative, "^([0-9]{1,2}[a-z]|)$");
             check_regex_text_or_die ("ordered", ordered, ordered, "^(true|false|)$");
             if ( ordered == "true" ) {
