@@ -44,6 +44,7 @@ etn_target(static ${PROJECT_NAME}-lib
         fty_common_mlm
         fty_common_messagebus
         fty_common_dto
+        fty-pack
     PRIVATE
 )
 

@@ -28,6 +28,86 @@
 #include <fty_common_rest_helpers.h>
 #include <fty_common_db.h>
 #include <fty_common_mlm_pool.h>
+#include <pack/pack.h>
+
+// =========================================================================================================================================
+
+struct Device: public pack::Node
+{
+    struct Contains: public pack::Node
+    {
+        pack::ObjectList<Device> devices = FIELD("devices");
+
+        using pack::Node::Node;
+        META(Contains, devices);
+    };
+
+    pack::String name       = FIELD("name");
+    pack::String id         = FIELD("id");
+    pack::Int32  assetOrder = FIELD("asset_order");
+    pack::String type       = FIELD("type");
+    pack::String subType    = FIELD("sub_type");
+    Contains     contains   = FIELD("contains");
+
+    using pack::Node::Node;
+    META(Device, name, id, assetOrder, type, subType, contains);
+};
+
+static void reorder(const Device& dev, Device& out, const std::string& order, const std::string& dir)
+{
+    out.name       = dev.name;
+    out.id         = dev.id;
+    out.assetOrder = dev.assetOrder;
+    out.type       = dev.type;
+    out.subType    = dev.subType;
+
+    try {
+        std::vector<std::string> ids;
+        for (const auto& it: dev.contains.devices) {
+            ids.push_back(it.id);
+        }
+
+        std::string sql = fmt::format(R"(
+            SELECT e.name
+            FROM t_bios_asset_element e
+            LEFT JOIN t_bios_asset_ext_attributes a
+                ON e.id_asset_element = a.id_asset_element AND a.keytag = '{}'
+            WHERE
+                e.name in ({})
+            ORDER BY {} {}
+        )",
+            order,
+            fmt::format("'{}'", fty::implode(ids, "', '")),
+            dir == "ASC" ? "COALESCE(a.value, 'ZZZZZZ999999')" : "a.value",
+            dir
+        );
+
+        tntdb::Connection connection = tntdb::connect(DBConn::url);
+        tntdb::Statement st = connection.prepareCached(sql);
+
+        tntdb::Result result = st.select();
+        for(const auto& row: result) {
+            std::string name;
+            row[0].get(name);
+
+            auto it = dev.contains.devices.find([&](const Device& item) {
+                return item.id == name;
+            });
+
+            if (it) {
+                Device child;
+                reorder(*it, child, order, dir);
+                out.contains.devices.append(child);
+            } else {
+                logWarn("Device with name {} was not found", name);
+            }
+        }
+    } catch(const std::exception& ex) {
+        logError("Error in reorder: {}", ex.what());
+    }
+}
+
+// =========================================================================================================================================
 
 // set S with MSG popped frame (S unchanged if NULL frame)
 static void zmsg_pop_s (zmsg_t *msg, std::string & s)
@@ -268,7 +348,46 @@ bool database_ready;
     CLEANUP;
     #undef CLEANUP
 
-    // set body (status is 200 OK)
-    reply.out () << json;
+    std::string order_by;
+    std::string order_dir = "ASC";
+    {
+        std::string order = qparam.param("orderBy");
+        std::string dir = qparam.param("order");
+        if (!order.empty()) {
+            static const std::set<std::string> orders = {"name", "model", "create_ts", "firmware", "max_power", "serial_no", "update_ts", "asset_order"};
+            if (orders.find(order) == orders.end()) {
+                std::string err = fmt::format("Wrong order {}", order);
+                logError(err);
+                http_die ("internal-error", ("unexpected parameter: " + err).c_str());
+            }
+            order_by = order;
+        }
+        if (!dir.empty()) {
+            if (dir == "ASC" || dir == "DESC") {
+                order_dir = dir;
+            } else {
+                std::string err = fmt::format("Wrong dir {}", order);
+                logError(err);
+                http_die ("internal-error", ("unexpected parameter: " + err).c_str());
+            }
+        }
+    }
+
+    if (!order_by.empty()) {
+        Device dev;
+        if (auto ret = pack::json::deserialize(json, dev); !ret) {
+            logError("Bad JSON payload: {}", ret.error());
+            std::string err = TRANSLATE_ME("Received an wrong JSON payload");
+            http_die ("internal-error", err.c_str());
+        }
+
+        // set body (status is 200 OK)
+        Device root;
+        reorder(dev, root, order_by, order_dir);
+        reply.out() << *pack::json::serialize(root);
+    } else {
+        // set body (status is 200 OK)
+        reply.out () << json;
+    }
 }
 </%cpp>

@@ -28,6 +28,91 @@
 #include <fty_common_rest_helpers.h>
 #include <fty_common_db.h>
 #include <fty_common_mlm_pool.h>
+#include <pack/pack.h>
+
+// =========================================================================================================================================
+
+struct Json: public pack::Node
+{
+    struct Device: public pack::Node
+    {
+        pack::String name    = FIELD("name");
+        pack::String id      = FIELD("id");
+        pack::String subType = FIELD("sub_type");
+
+        using pack::Node::Node;
+        META(Device, name, id, subType);
+    };
+
+    struct Power: public pack::Node
+    {
+        pack::String srcId = FIELD("src-id");
+        pack::String dstId = FIELD("dst-id");
+
+        using pack::Node::Node;
+        META(Power, srcId, dstId);
+    };
+
+    pack::ObjectList<Device> devices = FIELD("devices");
+    pack::ObjectList<Power> powers   = FIELD("powerchains");
+
+    using pack::Node::Node;
+    META(Json, devices, powers);
+};
+
+static Json reorder(const Json& other, const std::string& fieldOrder, const std::string& dir)
+{
+    try {
+        Json out;
+
+        std::vector<std::string> ids;
+        for (const auto& dev: other.devices) {
+            ids.push_back(dev.id);
+        }
+
+        std::string sql = fmt::format(R"(
+            SELECT e.name
+            FROM t_bios_asset_element e
+            LEFT JOIN t_bios_asset_ext_attributes a
+                ON e.id_asset_element = a.id_asset_element AND a.keytag = '{}'
+            WHERE
+                e.name in ({})
+            ORDER BY {} {}
+        )",
+            fieldOrder,
+            fmt::format("'{}'", fty::implode(ids, "', '")),
+            dir == "ASC" ? "COALESCE(a.value, 'ZZZZZZ999999')" : "a.value",
+            dir
+        );
+
+        tntdb::Connection connection = tntdb::connect(DBConn::url);
+        tntdb::Statement st = connection.prepareCached(sql);
+
+        tntdb::Result result = st.select();
+        for(const auto& row: result) {
+            std::string name;
+            row[0].get(name);
+
+            auto it = other.devices.find([&](const Json::Device& dev) {
+                return dev.id == name;
+            });
+
+            if (it) {
+                out.devices.append(*it);
+            } else {
+                logWarn("Device with name {} was not found", name);
+            }
+        }
+        out.powers = other.powers;
+
+        return out;
+    } catch(const std::exception& ex) {
+        logError("Reorder error {}", ex.what());
+        return other;
+    }
+}
+
+// =========================================================================================================================================
 
 // set S with MSG popped frame (S unchanged if NULL frame)
 static void zmsg_pop_s (zmsg_t *msg, std::string & s)
@@ -147,6 +232,31 @@ static void zmsg_pop_s (zmsg_t *msg, std::string & s)
         http_die ("request-param-bad", "dc_id", asset_id.c_str(), JSONIFY (reason.c_str ()).c_str ());
     }
 
+    std::string order_by;
+    std::string order_dir = "ASC";
+    {
+        std::string order = qparam.param("orderBy");
+        std::string dir = qparam.param("order");
+        if (!order.empty()) {
+            static const std::set<std::string> orders = {"name", "model", "create_ts", "firmware", "max_power", "serial_no", "update_ts", "asset_order"};
+            if (orders.find(order) == orders.end()) {
+                std::string err = fmt::format("Wrong order {}", order);
+                logError(err);
+                http_die ("internal-error", ("unexpected parameter: " + err).c_str());
+            }
+            order_by = order;
+        }
+        if (!dir.empty()) {
+            if (dir == "ASC" || dir == "DESC") {
+                order_dir = dir;
+            } else {
+                std::string err = fmt::format("Wrong dir {}", order);
+                logError(err);
+                http_die ("internal-error", ("unexpected parameter: " + err).c_str());
+            }
+        }
+    }
+
     // result JSON payload
     std::string json;
     zmsg_pop_s(resp, json);
@@ -159,7 +269,18 @@ static void zmsg_pop_s (zmsg_t *msg, std::string & s)
     CLEANUP;
     #undef CLEANUP
 
-    // set body (status is 200 OK)
-    reply.out () << json;
+    if (!order_by.empty()) {
+        Json out;
+        if (auto ret = pack::json::deserialize(json, out); !ret) {
+            logError("Bad JSON payload: {}", ret.error());
+            std::string err = TRANSLATE_ME("Received an wrong JSON payload");
+            http_die ("internal-error", err.c_str());
+        }
+
+        // set body (status is 200 OK)
+        reply.out() << *pack::json::serialize(reorder(out, order_by, order_dir));
+    } else {
+        reply.out() << json;
+    }
 }
 </%cpp>
