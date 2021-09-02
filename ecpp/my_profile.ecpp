@@ -26,6 +26,7 @@
     #include <stdlib.h>
     #include <fty_common_rest_helpers.h>
     #include <sstream>
+    #include <functional>
     #include <cxxtools/jsondeserializer.h>
     #include <cxxtools/jsonserializer.h>
     #include <fty_common_rest_audit_log.h>
@@ -39,6 +40,7 @@
 </%application>
 <%request scope="global">
     UserInfo user;
+    std::string gaccess_token;
     bool database_ready;
 </%request>
 <%cpp>
@@ -107,12 +109,23 @@
                 log_debug ("my_profile: database is ready but got empty preferences - using default set.");
             }
         }
+
+        // audit log MDC require the sessionId
+        // see 42ity:fty-common-rest.git src/fty_common_rest_audit_log.cc::setAuditLogContext()
+        std::hash<std::string> hasher;
+        std::size_t hashedToken = hasher(gaccess_token);
+        std::string sessionId = std::to_string(hashedToken);
+
 </%cpp>
 {
 "login" : "<$ user.login () $>",
 "must_change_pwd" : <$ change_pwd $>,
 "timeout" : "<$ timeout $>",
 "profile" : "<$ user.toString () $>",
+"session" : {
+    "userId" : <$ user.uid () $>,
+    "id" : "<$ sessionId $>"
+},
 <$$preferences$>
 }
 <%cpp>
