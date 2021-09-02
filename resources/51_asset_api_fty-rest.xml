@@ -1,9 +1,9 @@
     <!-- Asset management -->
     <!-- list of asset by container -->
-    <mapping>
+    <!-- <mapping>
       <target>assets_in@libfty_rest</target>
       <url>^/api/v1/assets($|/$)</url>
-    </mapping>
+    </mapping> -->
 
     <!-- Counters on asset -->
     <mapping>
