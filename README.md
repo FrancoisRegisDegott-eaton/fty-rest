@@ -2,7 +2,7 @@
 
 ## How to build
 
-To build, run:
+To build, run: 
 
 ```bash
 mkdir build && cd build
