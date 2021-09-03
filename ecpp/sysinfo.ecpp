@@ -181,7 +181,7 @@ sysinfo_detail (
         log_debug ("MlmSubprocess::output2 finished with return value == '%" PRIi32"'", *rv);
 
         size_t output_len = container_info.length();
-        if (rv != 0 && output_len<2) {
+        if (*rv != 0 && output_len<2) {
             container_info = NOTAVAILABLE;
         }
         else
@@ -200,7 +200,7 @@ sysinfo_detail (
         log_debug ("MlmSubprocess::output2 () finished with return value == '%" PRIi32"'", *rv);
 
         size_t output_len = hypervisor_info.length();
-        if (rv != 0 && output_len<2) {
+        if (*rv != 0 && output_len<2) {
             hypervisor_info = NOTAVAILABLE;
         }
         else
@@ -424,7 +424,7 @@ sysinfo_detail (
         log_debug ("MlmSubprocess::output (args = '{\"dpkg\", \"--list\"}') starting");
         auto rv_dpkg = fty::Process::run("dpkg", {"--list"}, dpkg_output, dpkg_error);
         log_debug ("MlmSubprocess::output () finished with return value == '%" PRIi32"'", *rv_dpkg);
-        if (rv_dpkg != 0) {
+        if (*rv_dpkg != 0) {
             log_error (
                 "MlmSubprocess::output (args = '{\"dpkg\", \"--list\"}') failed; "
                 "return code == '%" PRIi32"'\n"
@@ -575,11 +575,11 @@ sysinfo_detail (
             log_debug ("MlmSubprocess::output2 (args = '{\"sudo\", \"systemctl\", \"list-json\"}') starting");
             auto rv = fty::Process::run("sudo", {"systemctl", "list-json"}, unitstate_output, err1);
             log_debug ("MlmSubprocess::output2 () finished with return value == '%" PRIi32"'", *rv);
-            if (rv != 0) {
+            if (*rv != 0) {
                 std::string message =
                     "MlmSubprocess::output2 (args = '{\"sudo\", \"systemctl\", \"list-json\"}') failed; ";
                 message += "return code == '";
-                message += std::to_string(rv);
+                message += std::to_string(*rv);
                 message += "'";
                 throw std::runtime_error (message);
             }
@@ -620,12 +620,12 @@ sysinfo_detail (
             log_debug ("MlmSubprocess::output2 (args = '{\"df\", \"-k\"}') starting");
             auto rv = fty::Process::run("df", {"-k"}, diskstate_output, err1);
             log_debug ("MlmSubprocess::output2 () finished with return value == '%" PRIi32"'", *rv);
-            if (rv != 0) {
+            if (*rv != 0) {
                 std::string message =
                     TRANSLATE_ME ("MlmSubprocess::output2 (args = '{\"df\", \"-k\"}') failed; ");
                 message += TRANSLATE_ME ("return code");
                 message += " == '";
-                message += std::to_string(rv);
+                message += std::to_string(*rv);
                 message += "'";
                 throw std::runtime_error (message);
             }
@@ -647,12 +647,12 @@ sysinfo_detail (
             log_debug ("MlmSubprocess::output2 (args = '{\"mount\"}') starting");
             auto rv = fty::Process::run("mount", {}, diskstate_output, err1);
             log_debug ("MlmSubprocess::output2 () finished with return value == '%" PRIi32"'", *rv);
-            if (rv != 0) {
+            if (*rv != 0) {
                 std::string message =
                     TRANSLATE_ME ("MlmSubprocess::output2 (args = '{\"mount\"}') failed; ");
                 message += TRANSLATE_ME ("return code");
                 message += " == '";
-                message += std::to_string(rv);
+                message += std::to_string(*rv);
                 message += "'";
                 throw std::runtime_error (message);
             }
