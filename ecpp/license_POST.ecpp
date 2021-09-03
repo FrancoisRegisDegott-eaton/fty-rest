@@ -255,7 +255,7 @@ bool database_ready;
         int rv_dbcred = DBConn::dbreadcredentials ();
         if (!rv_dbcred) {
             std::string message;
-            if (rv_svc != 0) {
+            if (*rv_svc != 0) {
                 message = TRANSLATE_ME ("Database password file is missing AND failed to start start-db-services. Consult system logs");
             } else {
                 message = TRANSLATE_ME ("Database password file is missing");
