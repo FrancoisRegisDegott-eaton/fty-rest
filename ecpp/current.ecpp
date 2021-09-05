@@ -218,7 +218,8 @@ bool database_ready;
             const std::vector<std::string> strQuantities{
                 "status.battery",
                 "status.battery.charger",
-                "battery.alarm.code"
+                "battery.alarm.code",
+                "power.status"
             };
 
             for (auto &metric : metrics) {
