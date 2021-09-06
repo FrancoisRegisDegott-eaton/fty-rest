@@ -559,6 +559,7 @@ UserInfo user;
         { "alarms-audit",       bALL | bFCT, true,  "/var/log/app-audit/alarms-audit.log" },
         { "automation-audit",   bALL | bFCT, true,  "/var/log/app-audit/automation-audit.log" },
         { "email-audit",        bALL | bFCT, true,  "/var/log/app-audit/email-audit.log" },
+        { "ai-audit",           bALL | bFCT, true,  "/var/log/app-audit/ai-audit.log" },
         { "mass-mgr-audit",     bALL | bFCT, true,  "/var/log/etn-mass-management/mass-management-audit.log" },
         { "verify-fs",          bALL | bFCT, true,  "/var/log/verify-fs.log" },
         { "emc4j-audit",        bALL,        true,  "/var/log/etn-emc4j-ipm2/karaf.log" },
@@ -717,6 +718,7 @@ UserInfo user;
                         || (std::string::npos != data.filePath.find("alarms-audit.log"))
                         || (std::string::npos != data.filePath.find("automation-audit.log"))
                         || (std::string::npos != data.filePath.find("email-audit.log"))
+                        || (std::string::npos != data.filePath.find("ai-audit.log"))
                         || (std::string::npos != data.filePath.find("mass-management-audit.log"))
                         || (std::string::npos != data.filePath.find("verify-fs.log"))
                         || (std::string::npos != data.filePath.find("karaf.log"))
