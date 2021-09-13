@@ -348,7 +348,7 @@ bool database_ready;
     CLEANUP;
     #undef CLEANUP
 
-    std::string order_by;
+    std::string order_by = "asset_order";
     std::string order_dir = "ASC";
     {
         std::string order = qparam.param("orderBy");
