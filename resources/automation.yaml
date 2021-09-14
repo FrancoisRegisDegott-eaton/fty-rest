@@ -1,0 +1,220 @@
+
+openapi: 3.0.2
+info:
+  title: Eaton Automation service Rest API
+  description: List all api requests used for Automation service
+  version: 2.0.0
+  contact:
+    name: "Clement Perrette - EATON - IPM2"
+  license:
+    name: "Eaton Private License"
+#
+#
+servers:
+- url: "https://{hostname}:{port}"
+  description: HTTPS server
+  variables:
+    hostname:
+      description: Api hostname
+      default: localhost
+    port:
+      description: Api port
+      default: "443"
+security:
+- Bearer: []
+paths:
+# User and session management Bearer
+  /oauth2/token:
+    post:
+      summary: Before to access to any resources, the web client must open a valid session through his credentials
+      description: Get a token
+      tags:
+        - 'Token'
+      requestBody:
+        description: Authentication request payload
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: admin
+                password:
+                  type: string
+                  example: password
+              required:
+                - username
+                - password
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token_type:
+                    type: string
+                  access_token:
+                    type: string
+                  session:
+                    type: string
+                required:
+                  - access_token
+                  - token_type
+                  - session
+          description: The operation succeeded.
+        '401':
+          description: Invalid credentials
+        '403':
+          description: NotAuthorized
+        '404':
+          description: Not Found
+        '405':
+          description: Method Not Allowed
+        '500':
+          description: Internal Server Error
+#
+#
+  /etn/v2/services/automation/status:
+      get:
+        tags:
+        - status
+        summary: Get automation status list
+        description: "Get automation status list: Can be filtered, and is accessible to monitor profile"
+        operationId: getAutomationsList
+        parameters:
+        - name: id
+          in: query
+          description: automation status id filter
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/AutomationId'
+        - name: state
+          in: query
+          description: automation status id filter
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/AutomationStateEnum'
+        responses:
+          "400":
+            description: Bad request
+          "401":
+            description: Unauthorized
+          "403":
+            description: Forbidden
+          "404":
+            description: Not Found
+          "500":
+            description: Internal Server Error
+          "200":
+            description: List of automation (automation id)
+            content:
+              application/json:
+                schema:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AutomationStatus'
+
+  /etn/v2/services/automation/rule/{automationId}/start:
+    put:
+      tags:
+      - rules
+      summary: Force start an automation
+      description: "Force start an automation: Is accessible to admin profile"
+      operationId: startProcessInstance
+      parameters:
+      - name: automationId
+        in: path
+        description: Automation Id
+        required: true
+        schema:
+          $ref: '#/components/schemas/AutomationId'
+      requestBody:
+        description: The automation object
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AutomationStart'
+        required: true
+      responses:
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+        "204":
+          description: OK
+#
+#
+components:
+  securitySchemes:
+    Bearer:
+      type: http
+      scheme: bearer
+      description: "Bearer provide by user and session manager API"
+  schemas:
+#
+    AutomationId:
+      type: string
+      example: "etn_automation_15488474"
+      description: Automation unique Id
+      readOnly: true
+#
+    AutomationStatus:
+      required:
+      - id
+      - name
+      - state
+      - execution
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/AutomationId'
+        name:
+          type: string
+          description: Automation name
+          example: "Friendly name of my automation"
+        state:
+          $ref: '#/components/schemas/AutomationStateEnum'
+        execution:
+          $ref: '#/components/schemas/AutomationExecutionEnum'
+      description: Automation object
+#
+    AutomationStateEnum:
+      type: string
+      enum:
+      - ACTIVE    #The Automation is active and can be used
+      - INACTIVE  #The Automation is incative and accnot be used
+      - ON_ERROR  #The Automation is on error and cannot be run
+      description: Automation State Enum
+      readOnly: true
+#
+    AutomationExecutionEnum:
+      type: string
+      enum:
+      - WAITING   #The Automation Engine is waiting for a trigger to run the automation
+      - RUNNING   #The Automation Engine is running the automation
+      - UNLOADED  #The Automation is not loaded in the automation engine (inactive)
+      description: Automation Execution Enum
+      readOnly: true
+#
+    AutomationStart:
+      type: object
+      properties:
+        cause:
+          type: string
+          description: Optional cause for automation start
+          example: "Type here any cause which triggered the start"
+      description: Automation Start object
+#
