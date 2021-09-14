@@ -566,7 +566,7 @@ UserInfo user;
         { "emc4j-audit",        bALL,        true,  "/var/log/etn-emc4j-ipm2/karaf.log" },
         { "release",            bALL,        true,  "/etc/release-details.json" },
         { "messages",           bALL,        true,  "/var/log/messages" },
-        { "firmwares",          bALL,        true,  "/var/lib/fty/etn-mass-management/firmwares.cfg" },
+        { "firmwares",          bALL,        true,  "/var/lib/fty/etn-mass-management/settings.cfg" },
     // cmd export to logfiles
         { "emc4j-bundle",       bALL,        false, "/tmp/etn-emc4j-bundle.log" },  // curl export
         { "emc4j-jdbc",         bALL,        false, "/tmp/etn-emc4j-jdbc.log" },
