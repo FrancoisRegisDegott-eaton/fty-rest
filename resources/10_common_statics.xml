@@ -51,6 +51,11 @@
     </mapping>
     <mapping>
       <target>static@tntnet</target>
+      <pathinfo>/usr/share/common-licenses/Vendor-EULA</pathinfo>
+      <url>^/legal/Vendor-EULA</url>
+    </mapping>
+    <mapping>
+      <target>static@tntnet</target>
       <pathinfo>/usr/share/doc/$1</pathinfo>
       <url>^/legal/(.*)$</url>
     </mapping>
