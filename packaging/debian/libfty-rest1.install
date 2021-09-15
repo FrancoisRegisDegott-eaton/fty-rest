@@ -1,3 +1,4 @@
 # since tntnet shared object is not a typical library. Path is
 # e.g. /usr/lib/bios/libfty_rest.so*
 usr/lib/*/libfty_rest.so*
+etc/public_swagger/*

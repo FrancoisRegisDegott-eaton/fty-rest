@@ -11,11 +11,11 @@
     </mapping>
 
     <!-- Get the swagger file -->
-    <!--<mapping>
+    <mapping>
       <target>swagger@libfty_rest</target>
       <url>^/etn/v1/swagger/automation.yaml$</url>
       <method>GET</method>
-    </mapping>-->
+    </mapping>
 
     <!-- List supported lognames and extensions at the base URL -->
     <mapping>
