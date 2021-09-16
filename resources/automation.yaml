@@ -24,7 +24,7 @@ security:
 - Bearer: []
 paths:
 # User and session management Bearer
-  /oauth2/token:
+  /etn/v1/oauth2/token:
     post:
       summary: Before to access to any resources, the web client must open a valid session through his credentials
       description: Get a token
