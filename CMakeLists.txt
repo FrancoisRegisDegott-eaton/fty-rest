@@ -106,3 +106,6 @@ foreach(file ${MAPPING_FILES})
   file(APPEND ${TNTNET_XML_EXAMPLE} "${aux}")
 endforeach()
 install(FILES ${TNTNET_XML_EXAMPLE} DESTINATION ${CMAKE_INSTALL_FULL_DATAROOTDIR}/${PROJECT_NAME_HYPHEN}/examples/)
+
+#install swagger
+install(FILES "resources/automation.yaml" DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/public_swagger/)
