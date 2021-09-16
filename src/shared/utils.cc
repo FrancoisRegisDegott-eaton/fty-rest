@@ -23,6 +23,8 @@
 #include <assert.h>
 #include <fty_common.h>
 
+std::mutex timegm_mux;  // Mutex for my_timegm function which is not thread-safe
+
 bool is_average_step_supported(const char* step)
 {
     if (!step) {
@@ -88,11 +90,11 @@ int64_t datetime_to_calendar(const char* datetime)
 {
     if (!datetime || strlen(datetime) != DATETIME_FORMAT_LENGTH)
         return -1;
-    int  year, month, day, hour, minute, second;
-    char suffix;
+    int  year=0, month=0, day=0, hour=0, minute=0, second=0;
+    char suffix=0;
     int  rv = sscanf(datetime, DATETIME_FORMAT, &year, &month, &day, &hour, &minute, &second, &suffix);
     if (rv != 7 || suffix != 'Z') {
-        return -1;
+        return -2;
     }
     struct tm tm;
     tm.tm_year = year - 1900;
@@ -101,7 +103,9 @@ int64_t datetime_to_calendar(const char* datetime)
     tm.tm_hour = hour;
     tm.tm_min  = minute;
     tm.tm_sec  = second;
+    tm.tm_isdst = 0;
     int64_t t  = my_timegm(&tm);
+    if (t < 0) return -3;
     return t;
 }
 
@@ -118,6 +122,8 @@ int calendar_to_datetime(time_t timestamp, char* buffer, size_t n)
 
 int64_t my_timegm(struct tm* tm)
 {
+    std::lock_guard<std::mutex> lock (timegm_mux);
+
     // set the TZ environment variable to UTC, call mktime(3) and restore the value of TZ.
     time_t ret;
     char*  tz;
