@@ -22,6 +22,7 @@
 #include "cleanup.h"
 #include <assert.h>
 #include <fty_common.h>
+#include <mutex>
 
 std::mutex timegm_mux;  // Mutex for my_timegm function which is not thread-safe
 
