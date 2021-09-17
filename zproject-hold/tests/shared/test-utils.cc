@@ -68,9 +68,9 @@ TEST_CASE ("datetime_to_calendar", "[utils][time]") {
     SECTION ("bad arguments") {
         CHECK ( datetime_to_calendar (NULL) == -1 );
         CHECK ( datetime_to_calendar ("") == -1 );
-        CHECK ( datetime_to_calendar ("20150419181523") == -1 ); // missing utc timezone specifier
-        CHECK ( datetime_to_calendar ("20150419181523z") == -1 ); // wrong small case
-        CHECK ( datetime_to_calendar ("2015041918152Z") == -1 ); // one number short
+        CHECK ( datetime_to_calendar ("20150419181523") == -2 ); // missing utc timezone specifier
+        CHECK ( datetime_to_calendar ("20150419181523z") == -2 ); // wrong small case
+        CHECK ( datetime_to_calendar ("2015041918152Z") == -2 ); // one number short
     }
     SECTION ("correct execution") {
         CHECK ( datetime_to_calendar ("20150301100532Z") == 1425204332 );

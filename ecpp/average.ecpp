@@ -146,15 +146,17 @@ bool database_ready;
             }
         }
         st = datetime_to_calendar (checked_start_ts.c_str ());
-        if (st == -1) {
-            http_die ("request-param-bad", "start_ts", std::string ("'").append (checked_start_ts).append ("'").c_str (), "format 'YYYYMMDDhhmmssZ");
+        if (st < 0) {
+            http_die ("request-param-bad", "start_ts", std::string ("'").append (checked_start_ts).append ("'").c_str (),
+                std::string ("format 'YYYYMMDDhhmmssZ (Error=").append(std::to_string(st).c_str ()).append (")").c_str ());
         }
         if (checked_end_ts.empty ()) {
             http_die ("request-param-required", "end_ts");
         }
         end = datetime_to_calendar (checked_end_ts.c_str ());
-        if (end == -1) {
-            http_die ("request-param-bad", "end_ts", std::string ("'").append (checked_end_ts).append ("'").c_str (), "format 'YYYYMMDDhhmmssZ");
+        if (end < 0) {
+            http_die ("request-param-bad", "end_ts", std::string ("'").append (checked_end_ts).append ("'").c_str (),
+                std::string ("format 'YYYYMMDDhhmmssZ (Error=").append(std::to_string(st).c_str ()).append (")").c_str ());
         }
 
         // check that start_ts < end_ts
