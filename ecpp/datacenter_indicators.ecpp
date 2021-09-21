@@ -264,7 +264,7 @@ bool database_ready;
         }
 
         checked_arg1 = arg1;
-        check_regex_text_or_die ("arg2", arg2, checked_arg2, "^[_,a-z]{1,255}$");
+        check_regex_text_or_die ("arg2", arg2, checked_arg2, "^[_,a-z]{1,1024}$");
         // sanitize params end
     }
 
