@@ -360,8 +360,20 @@ cxxtools::SerializationInfo loadConfig(const ConfigMap& configMap, const std::st
 
     zconfig_t* child = zconfig_locate(root, it->second.second.c_str());
     if (!child) {
-        zconfig_destroy(&root);
-        bios_throw("element-not-found", it->second.second.c_str());
+        // Workaround when graphite address does not exist with old configuration file (version < 2.4.0)
+        // In this case return empty address instead return not found
+        if (key.compare("ETN_GRAPHITE_SERVER_ADDR") == 0) {
+            zconfig_put(root, it->second.second.c_str(), "");
+            child = zconfig_locate(root, it->second.second.c_str());
+            if (!child) {
+                zconfig_destroy(&root);
+                bios_throw("element-not-found", it->second.second.c_str());
+            }
+        }
+        else {
+            zconfig_destroy(&root);
+            bios_throw("element-not-found", it->second.second.c_str());
+        }
     }
 
     cxxtools::SerializationInfo si;
