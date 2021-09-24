@@ -70,6 +70,10 @@ static void reorder(const Device& device, Device& out, const std::string& order,
             for (const auto& it: dev) {
                 ids.push_back(it.id);
             }
+            
+            if(ids.empty()){
+                return;
+            }
 
             std::string sql = fmt::format(R"(
                 SELECT e.name
