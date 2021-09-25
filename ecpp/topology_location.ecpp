@@ -36,10 +36,13 @@ struct Device: public pack::Node
 {
     struct Contains: public pack::Node
     {
+        pack::ObjectList<Device> rooms   = FIELD("rooms");
+        pack::ObjectList<Device> rows    = FIELD("rows");
+        pack::ObjectList<Device> racks   = FIELD("racks");
         pack::ObjectList<Device> devices = FIELD("devices");
 
         using pack::Node::Node;
-        META(Contains, devices);
+        META(Contains, rooms, rows, racks, devices);
     };
 
     pack::String name       = FIELD("name");
@@ -53,59 +56,70 @@ struct Device: public pack::Node
     META(Device, name, id, assetOrder, type, subType, contains);
 };
 
-static void reorder(const Device& dev, Device& out, const std::string& order, const std::string& dir)
+static void reorder(const Device& device, Device& out, const std::string& order, const std::string& dir)
 {
-    out.name       = dev.name;
-    out.id         = dev.id;
-    out.assetOrder = dev.assetOrder;
-    out.type       = dev.type;
-    out.subType    = dev.subType;
+    out.name       = device.name;
+    out.id         = device.id;
+    out.assetOrder = device.assetOrder;
+    out.type       = device.type;
+    out.subType    = device.subType;
 
     try {
-        std::vector<std::string> ids;
-        for (const auto& it: dev.contains.devices) {
-            ids.push_back(it.id);
-        }
-
-        std::string sql = fmt::format(R"(
-            SELECT e.name
-            FROM t_bios_asset_element e
-            LEFT JOIN t_bios_asset_ext_attributes a
-                ON e.id_asset_element = a.id_asset_element AND a.keytag = '{}'
-            WHERE
-                e.name in ({})
-            ORDER BY {} {}
-        )",
-            order,
-            fmt::format("'{}'", fty::implode(ids, "', '")),
-            dir == "ASC" ? "COALESCE(a.value, 'ZZZZZZ999999')" : "a.value",
-            dir
-        );
-
-        tntdb::Connection connection = tntdb::connect(DBConn::url);
-        tntdb::Statement st = connection.prepareCached(sql);
-
-        tntdb::Result result = st.select();
-        for(const auto& row: result) {
-            std::string name;
-            row[0].get(name);
-
-            auto it = dev.contains.devices.find([&](const Device& item) {
-                return item.id == name;
-            });
-
-            if (it) {
-                Device child;
-                reorder(*it, child, order, dir);
-                out.contains.devices.append(child);
-            } else {
-                logWarn("Device with name {} was not found", name);
+        auto process = [&](const pack::ObjectList<Device>& dev, pack::ObjectList<Device>& output){
+            std::vector<std::string> ids;
+            for (const auto& it: dev) {
+                ids.push_back(it.id);
             }
-        }
+            
+            if(ids.empty()){
+                return;
+            }
+
+            std::string sql = fmt::format(R"(
+                SELECT e.name
+                FROM t_bios_asset_element e
+                LEFT JOIN t_bios_asset_ext_attributes a
+                    ON e.id_asset_element = a.id_asset_element AND a.keytag = '{}'
+                WHERE
+                    e.name in ({})
+                ORDER BY {} {}
+            )",
+                order,
+                fmt::format("'{}'", fty::implode(ids, "', '")),
+                dir == "ASC" ? "COALESCE(a.value, 'ZZZZZZ999999')" : "a.value",
+                dir
+            );
+
+            tntdb::Connection connection = tntdb::connect(DBConn::url);
+            tntdb::Statement st = connection.prepareCached(sql);
+
+            tntdb::Result result = st.select();
+            for(const auto& row: result) {
+                std::string name;
+                row[0].get(name);
+
+                auto it = dev.find([&](const Device& item) {
+                    return item.id == name;
+                });
+
+                if (it) {
+                    Device child;
+                    reorder(*it, child, order, dir);
+                    output.append(child);
+                } else {
+                    logWarn("Device with name {} was not found", name);
+                }
+            }
+        };
+        process(device.contains.rooms, out.contains.rooms);
+        process(device.contains.rows, out.contains.rows);
+        process(device.contains.racks, out.contains.racks);
+        process(device.contains.devices, out.contains.devices);
     } catch(const std::exception& ex) {
         logError("Error in reorder: {}", ex.what());
     }
-}
+} 
+
 
 // =========================================================================================================================================
 
@@ -348,7 +362,7 @@ bool database_ready;
     CLEANUP;
     #undef CLEANUP
 
-    std::string order_by;
+    std::string order_by = "asset_order"; 
     std::string order_dir = "ASC";
     {
         std::string order = qparam.param("orderBy");
@@ -371,7 +385,7 @@ bool database_ready;
                 http_die ("internal-error", ("unexpected parameter: " + err).c_str());
             }
         }
-    }
+    } 
 
     if (!order_by.empty()) {
         Device dev;
@@ -388,6 +402,6 @@ bool database_ready;
     } else {
         // set body (status is 200 OK)
         reply.out () << json;
-    }
+    } 
 }
 </%cpp>
