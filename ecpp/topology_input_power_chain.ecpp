@@ -232,7 +232,7 @@ static void zmsg_pop_s (zmsg_t *msg, std::string & s)
         http_die ("request-param-bad", "dc_id", asset_id.c_str(), JSONIFY (reason.c_str ()).c_str ());
     }
 
-    std::string order_by;
+    std::string order_by = "asset_order";
     std::string order_dir = "ASC";
     {
         std::string order = qparam.param("orderBy");
