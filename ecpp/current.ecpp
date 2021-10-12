@@ -346,6 +346,7 @@ bool database_ready;
     // serialize json response
     std::ostringstream response(std::ios_base::out);
     cxxtools::JsonSerializer serializer(response);
+    serializer.inputUtf8(true);
     serializer.serialize(siRoot).finish();
 
     reply.out() << response.str();
