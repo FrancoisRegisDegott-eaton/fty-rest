@@ -75,9 +75,11 @@ static Json reorder(const Json& other, const std::string& fieldOrder, const std:
             FROM t_bios_asset_element e
             LEFT JOIN t_bios_asset_ext_attributes a
                 ON e.id_asset_element = a.id_asset_element AND a.keytag = '{0}'
+            LEFT JOIN t_bios_asset_ext_attributes secondOrderAttr
+                ON id = secondOrderAttr.id_asset_element AND secondOrderAttr.keytag = 'name'
             WHERE
                 e.name in ({1})
-            ORDER BY {2} {3}, e.id_asset_element {3}
+            ORDER BY {2} {3}, secondOrderAttr.value {3}
         )",
             fieldOrder,
             fmt::format("'{}'", fty::implode(ids, "', '")),
