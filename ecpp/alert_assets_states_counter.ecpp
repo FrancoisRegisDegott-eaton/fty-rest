@@ -296,6 +296,7 @@ if (streq (part, "LIST")) {
             continue;
         }
         fty_proto_t *decoded = fty_proto_decode (&decoded_zmsg);
+        
         if (!decoded) {
             log_error ("Can't decode fty_proto");
             frame = zmsg_pop (recv_msg);
@@ -309,6 +310,12 @@ if (streq (part, "LIST")) {
         }
         if ((!checked_in.empty () && desired_elements.find (fty_proto_name (decoded)) == desired_elements.end ())) {
             log_debug ("skipping due to element_src '%s' not being in the list", fty_proto_name (decoded));
+            fty_proto_destroy (&decoded);
+            frame = zmsg_pop (recv_msg);
+            continue;
+        }
+        if (std::string(decoded->state) != "ACTIVE"){
+            log_debug ("'%s' is not active, skipping", fty_proto_name (decoded));
             fty_proto_destroy (&decoded);
             frame = zmsg_pop (recv_msg);
             continue;
