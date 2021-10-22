@@ -302,18 +302,19 @@ if (streq (part, "LIST")) {
             frame = zmsg_pop (recv_msg);
             continue;
         }
-        else if (fty_proto_id (decoded) != FTY_PROTO_ALERT) {
+        if (fty_proto_id (decoded) != FTY_PROTO_ALERT) {
             log_error ("message id is not FTY_PROTO_ALERT");
             fty_proto_destroy (&decoded);
             frame = zmsg_pop (recv_msg);
             continue;
         }
-        else if ((!checked_in.empty () && desired_elements.find (fty_proto_name (decoded)) == desired_elements.end ())) {
+        if ((!checked_in.empty () && desired_elements.find (fty_proto_name (decoded)) == desired_elements.end ())) {
             log_debug ("skipping due to element_src '%s' not being in the list", fty_proto_name (decoded));
             fty_proto_destroy (&decoded);
             frame = zmsg_pop (recv_msg);
             continue;
-        } else if (std::string(decoded->state) != "ACTIVE"){
+        }
+        if (std::string(decoded->state) != "ACTIVE"){
             log_debug ("'%s' is not active, skipping", fty_proto_name (decoded));
             fty_proto_destroy (&decoded);
             frame = zmsg_pop (recv_msg);
