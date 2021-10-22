@@ -296,7 +296,7 @@ if (streq (part, "LIST")) {
             continue;
         }
         fty_proto_t *decoded = fty_proto_decode (&decoded_zmsg);
-        // logInfo(decoded->state);
+        
         if (!decoded) {
             log_error ("Can't decode fty_proto");
             frame = zmsg_pop (recv_msg);
