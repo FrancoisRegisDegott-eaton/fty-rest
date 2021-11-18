@@ -71,4 +71,5 @@ protected:
     /// Ensures we are in reasonably clean state
     void clear();
     augtool();
+    bool init();
 };
