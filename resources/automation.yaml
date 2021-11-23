@@ -10,15 +10,6 @@ info:
 #
 #
 servers:
-- url: "http://{hostname}:{port}"
-  description: HTTP development server
-  variables:
-    hostname:
-      description: Api hostname
-      default: localhost
-    port:
-      description: Api port
-      default: "8080"
 - url: "https://{hostname}:{port}"
   description: HTTPS development server
   variables:
