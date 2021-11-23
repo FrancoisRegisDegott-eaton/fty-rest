@@ -204,7 +204,7 @@ bool database_ready;
     }
 
     std::string element_name;
-    try{
+    try {
         tntdb::Connection conn = tntdb::connect (DBConn::url);
 
         auto basic_ret = DBAssets::select_asset_element_web_byId (conn, checked_element_id);
@@ -218,39 +218,40 @@ bool database_ready;
 
         element_name = basic_ret.item.name;
     }
-    catch (const  std::exception &e ) {
+    catch (const std::exception &e) {
         std::string err = JSONIFY (e.what ());
         http_die ("internal-error", err.c_str ());
     }
+
     // connect to malamute
     auto client = mlm_pool.get();
     if (!client) {
         log_fatal ("mlm_pool.get () failed.");
-        std::string err =  TRANSLATE_ME ("mlm_pool.get () failed.");
+        std::string err = TRANSLATE_ME ("mlm_pool.get () failed.");
         http_die ("internal-error", err.c_str ());
     }
 
     if (csv == "yes")
     {
         std::vector <std::vector <std::string>> csv_data;
-        csv_data.push_back (std::vector <std::string> {"type"});
-
         bool got_timestamps = false;
+
         for (int i = 0; i < AVG_TYPES_SIZE; i++)
         {
             zuuid_t *uuid = zuuid_new ();
-            zmsg_t *msg = zmsg_new ();
-            zmsg_addstr (msg, zuuid_str_canonical (uuid));
-            zmsg_addstr (msg, "GET");
-            zmsg_addstr (msg, element_name.c_str ());
-            zmsg_addstr (msg, checked_source.c_str ());
-            zmsg_addstr (msg, checked_step.c_str ());
-            zmsg_addstr (msg, AVG_TYPES [i]);
-            zmsg_addstr (msg, std::to_string (st).c_str ());
-            zmsg_addstr (msg, std::to_string (end).c_str ());
-            zmsg_addstr (msg, "1");
+            zmsg_t *sent_msg = zmsg_new ();
+            zmsg_addstr (sent_msg, zuuid_str_canonical (uuid));
+            zmsg_addstr (sent_msg, "GET");
+            zmsg_addstr (sent_msg, element_name.c_str ());
+            zmsg_addstr (sent_msg, checked_source.c_str ());
+            zmsg_addstr (sent_msg, checked_step.c_str ());
+            zmsg_addstr (sent_msg, AVG_TYPES [i]);
+            zmsg_addstr (sent_msg, std::to_string (st).c_str ());
+            zmsg_addstr (sent_msg, std::to_string (end).c_str ());
+            zmsg_addstr (sent_msg, "1"); // ordered
 
-            int rv = client->sendto ("fty-metric-store", "aggregated data", 1000, &msg);
+            int rv = client->sendto ("fty-metric-store", "aggregated data", 1000, &sent_msg);
+            zmsg_destroy(&sent_msg);
             if (rv == -1) {
                 zuuid_destroy (&uuid);
                 log_fatal ("Cannot send message to fty-metric-store");
@@ -262,15 +263,19 @@ bool database_ready;
             zuuid_destroy (&uuid);
             if (!recv_msg) {
                 log_fatal ("client->recv (timeout = '30') returned NULL");
-                std::string err =  TRANSLATE_ME ("client->recv () returned NULL");
+                std::string err = TRANSLATE_ME ("client->recv () returned NULL");
                 http_die ("internal-error", err.c_str ());
             }
 
             char *frame = zmsg_popstr (recv_msg);
-            if (streq (frame, "ERROR")) {
+
+            // die on error
+            if (!(frame && streq(frame, "OK"))) {
                 zstr_free (&frame);
                 frame = zmsg_popstr (recv_msg);
                 zmsg_destroy (&recv_msg);
+                log_info ("error frame == '%s'", frame);
+
                 if (frame) {
                     if (streq (frame, "BAD_REQUEST")) {
                         zstr_free (&frame);
@@ -279,15 +284,17 @@ bool database_ready;
                                 checked_type.c_str (), checked_step.c_str (), checked_source.c_str (), element_name.c_str ());
                         http_die ("element-not-found", die.c_str ());
                     }
-                    log_info ("error frame == '%s'", frame);
-                    http_die ("internal-error", frame);
+                    std::string err{frame};
+                    zstr_free (&frame);
+                    http_die ("internal-error", err.c_str());
                 }
-                else
-                    http_die ("internal-error", "");
+                http_die ("internal-error", "");
             }
+            zstr_free (&frame);
 
-            if (streq (frame, "OK")) {
-                zstr_free (&frame);
+            // success, parse response
+            {
+                // get header
                 char *element_rep = zmsg_popstr (recv_msg);
                 char *source_rep = zmsg_popstr (recv_msg);
                 char *step_rep = zmsg_popstr (recv_msg);
@@ -297,29 +304,44 @@ bool database_ready;
                 char *ordered = zmsg_popstr (recv_msg);
                 char *units_rep = zmsg_popstr (recv_msg);
 
+                // we got some datas?
+                if (zmsg_size(recv_msg) >= 2) {
+                    if (!got_timestamps) {
+                        // first row: "type" label + timestamps receipt (index 0)
+                        csv_data.push_back (std::vector <std::string> {"type"});
+                    }
+
+                    // add a new row: type_rep label + datas
+                    csv_data.push_back (std::vector <std::string> {type_rep});
+                    std::size_t csvLastIndex = csv_data.size() - 1;
+
+                    // fill in datas, pairs of (timestamp, value)
+                    while (zmsg_size(recv_msg) >= 2) {
+                        char *timestamp = zmsg_popstr (recv_msg);
+                        char *value = zmsg_popstr (recv_msg);
+
+                        if (!got_timestamps) {
+                            csv_data [0].push_back (timestamp);
+                        }
+                        csv_data [csvLastIndex].push_back (value);
+
+                        zstr_free (&value);
+                        zstr_free (&timestamp);
+                    }
+
+                    got_timestamps = true; // push timestamps once
+                }
+
+                // cleanup
                 zstr_free (&element_rep);
                 zstr_free (&source_rep);
                 zstr_free (&step_rep);
+                zstr_free (&type_rep);
                 zstr_free (&start_date_rep);
-                zstr_free (&units_rep);
                 zstr_free (&end_date_rep);
                 zstr_free (&ordered);
-
-                csv_data.push_back (std::vector <std::string> {type_rep});
-                // now we are going to fill in data
-                while (zmsg_size (recv_msg) >= 2 ) {
-                    char *timestamp = zmsg_popstr (recv_msg);
-                    char *value = zmsg_popstr (recv_msg);
-                    if (!got_timestamps)
-                        csv_data [0].push_back (timestamp);
-                    csv_data [size_t(i)+1].push_back (value);
-                    zstr_free (&value);
-                    zstr_free (&timestamp);
-                }
-                zstr_free (&type_rep);
-                got_timestamps = true;
-
-            } // first frame OK
+                zstr_free (&units_rep);
+            }
 
             zmsg_destroy (&recv_msg);
         } // end for-cycle
@@ -329,32 +351,42 @@ bool database_ready;
         //escape special characters
         element_ename = std::regex_replace(element_ename, std::regex("( |\t)"), "_");
 
-        std::string export_file_name = "export_" + checked_start_ts + "_" + checked_end_ts + "_" + checked_step + "_" + checked_source + "_" + element_ename + ".csv";
-        reply.setHeader (tnt::httpheader::contentDisposition, ("attachment; filename=\"" + export_file_name + "\"").c_str ());
+        std::string export_file_name =
+            "export_"
+            + checked_start_ts + "_"
+            + checked_end_ts + "_"
+            + checked_step + "_"
+            + checked_source + "_"
+            + element_ename
+            + ".csv";
+
+        reply.setHeader (tnt::httpheader::contentDisposition,
+            std::string{"attachment; filename=\"" + export_file_name + "\""}.c_str()
+        );
         reply.setContentType ("text/csv;charset=UTF-8");
         cxxtools::CsvSerializer serializer (reply.out ());
         serializer.serialize (csv_data);
-
     }
-    else
+    else // csv == "no"
     {
         zuuid_t *uuid = zuuid_new ();
-        zmsg_t *msg = zmsg_new ();
-        zmsg_addstr (msg, zuuid_str_canonical (uuid));
-        zmsg_addstr (msg, "GET");
-        zmsg_addstr (msg, element_name.c_str ());
-        zmsg_addstr (msg, checked_source.c_str ());
-        zmsg_addstr (msg, checked_step.c_str ());
-        zmsg_addstr (msg, checked_type.c_str ());
-        zmsg_addstr (msg, std::to_string (st).c_str ());
-        zmsg_addstr (msg, std::to_string (end).c_str ());
-        zmsg_addstr (msg, (checked_ordered ? "1" : "0") );
+        zmsg_t *sent_msg = zmsg_new ();
+        zmsg_addstr (sent_msg, zuuid_str_canonical (uuid));
+        zmsg_addstr (sent_msg, "GET");
+        zmsg_addstr (sent_msg, element_name.c_str ());
+        zmsg_addstr (sent_msg, checked_source.c_str ());
+        zmsg_addstr (sent_msg, checked_step.c_str ());
+        zmsg_addstr (sent_msg, checked_type.c_str ());
+        zmsg_addstr (sent_msg, std::to_string (st).c_str ());
+        zmsg_addstr (sent_msg, std::to_string (end).c_str ());
+        zmsg_addstr (sent_msg, (checked_ordered ? "1" : "0") );
 
-        int rv = client->sendto ("fty-metric-store", "aggregated data", 1000, &msg);
+        int rv = client->sendto ("fty-metric-store", "aggregated data", 1000, &sent_msg);
+        zmsg_destroy(&sent_msg);
         if (rv == -1) {
             zuuid_destroy (&uuid);
             log_fatal ("Cannot send message to fty-metric-store");
-            std::string err =  TRANSLATE_ME ("mlm_client_sendto failed.");
+            std::string err = TRANSLATE_ME ("mlm_client_sendto failed.");
             http_die ("internal-error", err.c_str ());
         }
 
@@ -362,15 +394,19 @@ bool database_ready;
         zuuid_destroy (&uuid);
         if (!recv_msg) {
             log_fatal ("client->recv (timeout = '30') returned NULL");
-            std::string err =  TRANSLATE_ME ("client->recv () returned NULL");
+            std::string err = TRANSLATE_ME ("client->recv () returned NULL");
             http_die ("internal-error", err.c_str ());
         }
 
         char *frame = zmsg_popstr (recv_msg);
-        if (streq (frame, "ERROR")) {
+
+        // die on error
+        if (!(frame && streq(frame, "OK"))) {
             zstr_free (&frame);
             frame = zmsg_popstr (recv_msg);
             zmsg_destroy (&recv_msg);
+            log_info ("error frame == '%s'", frame);
+
             if (frame) {
                 if (streq (frame, "BAD_REQUEST")) {
                     zstr_free (&frame);
@@ -378,62 +414,64 @@ bool database_ready;
                             checked_type.c_str (), checked_step.c_str (), checked_source.c_str (), element_name.c_str ());
                     http_die ("element-not-found", die.c_str ());
                 }
-                log_info ("error frame == '%s'", frame);
-                http_die ("internal-error", frame);
+                std::string err{frame};
+                zstr_free (&frame);
+                http_die ("internal-error", err.c_str());
             }
-            else
-                http_die ("internal-error", "");
+            http_die ("internal-error", "");
         }
-
-    if (streq (frame, "OK")) {
         zstr_free (&frame);
-        // now we are going to set up the head of the response
-        char *element_rep = zmsg_popstr (recv_msg);
-        char *source_rep = zmsg_popstr (recv_msg);
-        char *step_rep = zmsg_popstr (recv_msg);
-        char *type_rep = zmsg_popstr (recv_msg);
-        char *start_date_rep = zmsg_popstr (recv_msg);
-        char *end_date_rep = zmsg_popstr (recv_msg);
-        char *ordered = zmsg_popstr (recv_msg);
-        char *units_rep = zmsg_popstr (recv_msg);
+
+        // success, parse response
+        {
+            // now we are going to set up the head of the response
+            char *element_rep = zmsg_popstr (recv_msg);
+            char *source_rep = zmsg_popstr (recv_msg);
+            char *step_rep = zmsg_popstr (recv_msg);
+            char *type_rep = zmsg_popstr (recv_msg);
+            char *start_date_rep = zmsg_popstr (recv_msg);
+            char *end_date_rep = zmsg_popstr (recv_msg);
+            char *ordered = zmsg_popstr (recv_msg);
+            char *units_rep = zmsg_popstr (recv_msg);
 </%cpp>
-{
-        <$$ utils::json::jsonify ("units", units_rep) $>,
-        <$$ utils::json::jsonify ("source", source_rep) $>,
-        <$$ utils::json::jsonify ("step", step_rep) $>,
-        <$$ utils::json::jsonify ("type", type_rep) $>,
-        <$$ utils::json::jsonify ("element_id", element_name) $>,
-        <$$ utils::json::jsonify ("start_ts", start_date_rep) $>,
-        <$$ utils::json::jsonify ("end_ts", end_date_rep) $>,
-        "data":[
+        {
+            <$$ utils::json::jsonify ("units", units_rep) $>,
+            <$$ utils::json::jsonify ("source", source_rep) $>,
+            <$$ utils::json::jsonify ("step", step_rep) $>,
+            <$$ utils::json::jsonify ("type", type_rep) $>,
+            <$$ utils::json::jsonify ("element_id", element_name) $>,
+            <$$ utils::json::jsonify ("start_ts", start_date_rep) $>,
+            <$$ utils::json::jsonify ("end_ts", end_date_rep) $>,
+            "data":[
 <%cpp>
-        // first of all, need to clean up
-        zstr_free (&element_rep);
-        zstr_free (&source_rep);
-        zstr_free (&step_rep);
-        zstr_free (&type_rep);
-        zstr_free (&start_date_rep);
-        zstr_free (&units_rep);
-        zstr_free (&ordered);
-        // now we are going to fill in data
-        while  ( zmsg_size (recv_msg) >= 2 ) {
-            char *timestamp = zmsg_popstr (recv_msg);
-            char *value = zmsg_popstr (recv_msg);
-            </%cpp>
-{
-    "value": <$$ value $>,
-    "timestamp": <$$ timestamp $>,
-    "scale": 0
-} <$$ zmsg_size (recv_msg) != 0 ? "," : "" $>
-            <%cpp>
-            zstr_free (&value);
-            zstr_free (&timestamp);
+            // first of all, need to clean up
+            zstr_free (&element_rep);
+            zstr_free (&source_rep);
+            zstr_free (&step_rep);
+            zstr_free (&type_rep);
+            zstr_free (&start_date_rep);
+            zstr_free (&units_rep);
+            zstr_free (&ordered);
+            // now we are going to fill in data
+            while  ( zmsg_size (recv_msg) >= 2 ) {
+                char *timestamp = zmsg_popstr (recv_msg);
+                char *value = zmsg_popstr (recv_msg);
+</%cpp>
+                {
+                    "value": <$$ value $>,
+                    "timestamp": <$$ timestamp $>,
+                    "scale": 0
+                } <$$ zmsg_size (recv_msg) != 0 ? "," : "" $>
+<%cpp>
+                zstr_free (&value);
+                zstr_free (&timestamp);
+            }
+</%cpp>
+            ]
         }
-</%cpp>
-        ]
-}
 <%cpp>
-    } // OK
-    zmsg_destroy (&recv_msg);
-    }
+    	}
+
+    	zmsg_destroy (&recv_msg);
+	} //csv
 </%cpp>
