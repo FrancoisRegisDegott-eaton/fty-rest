@@ -1,4 +1,3 @@
-
 openapi: 3.0.2
 info:
   title: Eaton Automation service Rest API
@@ -11,8 +10,17 @@ info:
 #
 #
 servers:
+- url: "http://{hostname}:{port}"
+  description: HTTP development server
+  variables:
+    hostname:
+      description: Api hostname
+      default: localhost
+    port:
+      description: Api port
+      default: "8080"
 - url: "https://{hostname}:{port}"
-  description: HTTPS server
+  description: HTTPS development server
   variables:
     hostname:
       description: Api hostname
@@ -75,52 +83,176 @@ paths:
           description: Method Not Allowed
         '500':
           description: Internal Server Error
+  /etn/v1/sessionService/sessions/{id}:
+    get:
+      security:
+        - bearerAuth: [ ]
+      description: 'Retrieve session information from a id'
+      tags:
+        - 'Session service'
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/session'
+          description: The operation succeeded.
+        '500':
+          description: InternalError
+    delete:
+      security:
+        - bearerAuth: [ ]
+      description: 'Delete a sesssion'
+      tags:
+        - 'Session service'
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+      responses:
+        '200':
+          description: The operation succeeded.
+        '500':
+          description: InternalError
+  /etn/v1/sessionService/sessions/{id}/actions/heartbeat:
+    post:
+      security:
+        - bearerAuth: [ ]
+      description: Keep session alive
+      tags:
+        - 'Session service'
+      parameters:
+        - in: path
+          name: id
+          schema:
+            type: string
+          required: true
+      responses:
+        '200':
+          description: The operation succeeded.
+        '500':
+          description: InternalError
 #
 #
   /etn/v2/services/automation/status:
-      get:
-        tags:
-        - status
-        summary: Get automation status list
-        description: "Get automation status list: Can be filtered, and is accessible to monitor profile"
-        operationId: getAutomationsList
-        parameters:
-        - name: id
-          in: query
-          description: automation status id filter
-          required: false
-          schema:
-            type: array
-            items:
-              $ref: '#/components/schemas/AutomationId'
-        - name: state
-          in: query
-          description: automation status id filter
-          required: false
-          schema:
-            type: array
-            items:
-              $ref: '#/components/schemas/AutomationStateEnum'
-        responses:
-          "400":
-            description: Bad request
-          "401":
-            description: Unauthorized
-          "403":
-            description: Forbidden
-          "404":
-            description: Not Found
-          "500":
-            description: Internal Server Error
-          "200":
-            description: List of automation (automation id)
-            content:
-              application/json:
-                schema:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/AutomationStatus'
-
+    get:
+      tags:
+      - status
+      summary: Get automation status list
+      description: "Get automation status list: Can be filtered, and is accessible\
+        \ to monitor profile"
+      operationId: getAutomationsList
+      parameters:
+      - name: id
+        in: query
+        description: Automation id filter (paging filters are not used if this filter
+          is used)
+        schema:
+          uniqueItems: true
+          type: array
+          items:
+            type: string
+      - name: state
+        in: query
+        description: Automation states filter (apply after other filters)
+        schema:
+          uniqueItems: true
+          type: array
+          items:
+            $ref: '#/components/schemas/AutomationStateEnum'
+      - name: page
+        in: query
+        description: Automation states paging page filter
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - name: max
+        in: query
+        description: Automation states paging max items per page filter
+        schema:
+          type: integer
+          format: int32
+          default: 10
+      - name: order
+        in: query
+        description: Automation states set ordering
+        schema:
+          $ref: '#/components/schemas/OrderEnum'
+      - name: orderBy
+        in: query
+        description: Automation states set ordering by
+        schema:
+          $ref: '#/components/schemas/OrderByEnum'
+      responses:
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AutomationStatusDto'
+  /etn/v2/services/automation/events:
+    get:
+      tags:
+      - events
+      summary: Get automation event
+      description: "Get automation event: Is accessible to admin profile"
+      operationId: getEvents
+      parameters:
+      - name: topic
+        in: query
+        description: "Event topic list\n - 'automation' .............. Receive event\
+          \ of type automation create, update, delete and flow\n - 'automation-inputs'\
+          \ .. Receive event of type automation variable"
+        schema:
+          type: array
+          items:
+            type: string
+            default: automation
+            enum:
+            - automation
+            - automation-inputs
+          default: automation
+          enum:
+          - automation
+          - automation-inputs
+      responses:
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+        default:
+          description: Success
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AutomationEventDto'
   /etn/v2/services/automation/rule/{automationId}/start:
     put:
       tags:
@@ -134,13 +266,12 @@ paths:
         description: Automation Id
         required: true
         schema:
-          $ref: '#/components/schemas/AutomationId'
+          type: string
       requestBody:
-        description: The automation object
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AutomationStart'
+              $ref: '#/components/schemas/AutomationStartDto'
         required: true
       responses:
         "400":
@@ -154,67 +285,283 @@ paths:
         "500":
           description: Internal Server Error
         "204":
-          description: OK
-#
-#
+          description: Success
 components:
-  securitySchemes:
-    Bearer:
-      type: http
-      scheme: bearer
-      description: "Bearer provide by user and session manager API"
   schemas:
-#
-    AutomationId:
+    AutomationExecutionEnum:
       type: string
-      example: "etn_automation_15488474"
-      description: Automation unique Id
+      description: "Automation execution state\n - WAITING : The Automation Engine\
+        \ is waiting for a trigger to run the automation\n - RUNNING : The Automation\
+        \ Engine is running the automation\n - UNLOADED: The Automation is not loaded\
+        \ in the automation engine (inactive)\n - UNKNOWN : The Automation is on unknown\
+        \ execution state"
       readOnly: true
-#
-    AutomationStatus:
+      enum:
+      - WAITING
+      - RUNNING
+      - UNLOADED
+      - UNKNOWN
+    AutomationStateEnum:
+      type: string
+      description: "Automation State Enum\n - ACTIVE  : The Automation is active and\
+        \ can be used\n - INACTIVE: The Automation is inactive and cannot be used\n\
+        \ - ON ERROR: The Automation is on error and cannot be run\n - UNKNOWN : The\
+        \ Automation is on unknown state"
+      readOnly: true
+      enum:
+      - ACTIVE
+      - INACTIVE
+      - ON ERROR
+      - UNKNOWN
+    AutomationStatusDto:
       required:
+      - execution
       - id
       - name
       - state
-      - execution
       type: object
       properties:
-        id:
-          $ref: '#/components/schemas/AutomationId'
         name:
           type: string
-          description: Automation name
-          example: "Friendly name of my automation"
+          description: The automation name
+          readOnly: true
+          example: My automation name
+        id:
+          type: string
+          description: The automation identifier
+          readOnly: true
+          example: etn_automation_id_0123456789
         state:
           $ref: '#/components/schemas/AutomationStateEnum'
         execution:
           $ref: '#/components/schemas/AutomationExecutionEnum'
-      description: Automation object
-#
-    AutomationStateEnum:
+      description: Data transfer object describing an automation status
+    OrderEnum:
       type: string
+      description: "Performs the query result set ordering\n - ASC : Ascending\n -\
+        \ DESC : Descending"
+      writeOnly: true
       enum:
-      - ACTIVE    #The Automation is active and can be used
-      - INACTIVE  #The Automation is incative and accnot be used
-      - ON_ERROR  #The Automation is on error and cannot be run
-      description: Automation State Enum
-      readOnly: true
-#
-    AutomationExecutionEnum:
+      - ASC
+      - DESC
+    OrderByEnum:
       type: string
+      description: "Performs the query result set ordering by\n - id : Order by automation\
+        \ id\n - name : Order by automation name"
+      writeOnly: true
       enum:
-      - WAITING   #The Automation Engine is waiting for a trigger to run the automation
-      - RUNNING   #The Automation Engine is running the automation
-      - UNLOADED  #The Automation is not loaded in the automation engine (inactive)
-      description: Automation Execution Enum
+      - id
+      - name
+    AutomationEventDto:
+      required:
+      - payload
+      - topic
+      type: object
+      properties:
+        topic:
+          type: string
+          description: |-
+            Automation event topic
+             - automation/flow/\<automationId\>     Flow event on automation execution
+             - automation/update/\<automationId\>   Status event on automation update
+             - automation/create/\<automationId\>   Status event on automation creation
+             - automation/delete/\<automationId\>   Status event on automation deletion
+             - automation/variable/\<automationId\> Variable event changes for automation
+          readOnly: true
+          example: automation/flow/etn_automation_id_1626180548986
+        payload:
+          $ref: '#/components/schemas/AutomationEventPayload'
+      description: Data transfer object describing an automation event
+    AutomationEventPayload:
+      type: object
+      description: Generic Event object
       readOnly: true
-#
-    AutomationStart:
+      oneOf:
+      - $ref: '#/components/schemas/AutomationFlowEventDto'
+      - $ref: '#/components/schemas/AutomationStatusEventDto'
+      - $ref: '#/components/schemas/AutomationVariableEventDto'
+    AutomationFlowEventActivityTypeEnum:
+      type: string
+      description: "Automation flow event activity type Enum\n - startEvent  : The\
+        \ Automation execution is started\n - userTask: The Automation execution is\
+        \ computing a user task\n - intermediateCatchEvent: The Automation is catching\
+        \ an event\n - intermediateThrowEvent : The Automation is throwing a event\n\
+        \ - boundaryEvent : Bound on an event (timeout or error)\n - eventBasedGateway\
+        \ : The Event-based Gateway provides a way to take a decision based on events\n\
+        \ - exclusiveGateway : An exclusive gateway is used to model a decision in\
+        \ the process\n - timerEventDefinition : Timer events are events that are\
+        \ triggered by a defined timer\n - endEvent : The Automation is ended"
+      readOnly: true
+      enum:
+      - startEvent
+      - userTask
+      - intermediateCatchEvent
+      - intermediateThrowEvent
+      - boundaryEvent
+      - eventBasedGateway
+      - exclusiveGateway
+      - timerEventDefinition
+      - endEvent
+    AutomationFlowEventDto:
+      required:
+      - execId
+      - ts
+      - type
+      type: object
+      properties:
+        execId:
+          type: string
+          description: Automation event execution id
+          readOnly: true
+        type:
+          $ref: '#/components/schemas/AutomationFlowEventTypeEnum'
+        ts:
+          type: integer
+          description: Automation event timestamp
+          format: int64
+          readOnly: true
+        activityType:
+          $ref: '#/components/schemas/AutomationFlowEventActivityTypeEnum'
+        name:
+          type: string
+          description: Automation event activity name or variable name
+          readOnly: true
+        value:
+          type: string
+          description: Automation event variable value
+          readOnly: true
+      description: Data transfer object describing an automation flow event
+    AutomationFlowEventTypeEnum:
+      type: string
+      description: "Automation flow event activity type Enum\n- sequenceflow_taken\
+        \ : Sequence flow between two activities\n- timer_scheduled : Timer scheduled\
+        \ (start)\n- timer_fired : Timer fired (end)\n- job_canceled : Job is cancelled\n\
+        - activity_started : Activity has started\n- activity_completed : Activity\
+        \ has end successfully\n- activity_cancelled : Activity has been canceled\n\
+        - variable_created : Variable has been created\n- variable_updated: Variable\
+        \ has been updated\n- variable_deleted : Variable has been deleted\n- process_started\
+        \ : Process has been started\n- process_completed : Process has end\n- process_completed_with_terminate_end_event\
+        \ : Process has end on success\n- process_completed_with_error_end_event :\
+        \ Process has end on error\n- process_cancelled : Process has been cancelled"
+      readOnly: true
+      enum:
+      - sequenceflow_taken
+      - timer_scheduled
+      - timer_fired
+      - job_canceled
+      - activity_started
+      - activity_completed
+      - activity_cancelled
+      - variable_created
+      - variable_updated
+      - variable_deleted
+      - process_created
+      - process_started
+      - process_completed
+      - process_completed_with_terminate_end_event
+      - process_completed_with_error_end_event
+      - process_cancelled
+    AutomationStatusEventDto:
+      required:
+      - id
+      type: object
+      properties:
+        id:
+          type: string
+          description: The automation identifier
+          readOnly: true
+          example: etn_automation_id_0123456789
+      description: Data transfer object describing an automation status event
+    AutomationVariableEventDto:
+      required:
+      - value
+      - variable
+      type: object
+      properties:
+        variable:
+          type: string
+          description: Variable name
+          readOnly: true
+        value:
+          type: object
+          description: Variable value
+          readOnly: true
+      description: Data transfer object describing an automation variable flow event
+    AutomationStartDto:
       type: object
       properties:
         cause:
           type: string
           description: Optional cause for automation start
-          example: "Type here any cause which triggered the start"
-      description: Automation Start object
-#
+          writeOnly: true
+          example: Type here any cause which triggered the start
+      description: Data transfer object describing a force start on automation
+    sessionSettings:
+      type: object
+      required: [ leaseTime, inactivityTimeout ]
+      properties:
+        leaseTime:
+          description: Lease time (seconds)
+          type: integer
+          default: 7200
+          minimum: 3600
+          maximum: 43200
+        inactivityTimeout:
+          description: Inactivity timeout (seconds)
+          type: integer
+          default: 3600
+          minimum: 60
+          maximum: 43200
+      example:
+        {
+          "leaseTime": 7200,
+          "inactivityTimeout": 3600
+        }
+    session:
+      type: object
+      required: [ '@id', id, account ]
+      properties:
+        '@id':
+          type: string
+        id:
+          type: string
+        account:
+          type: string
+        remaining:
+          $ref: '#/components/schemas/sessionSettings'
+        sessionSettings:
+          $ref: '#/components/schemas/sessionSettings'
+        interface:
+          type: object
+          properties:
+            application:
+              type: string
+            network:
+              type: string
+            physical:
+              type: string
+        actions:
+          type: object
+          properties:
+            '#heartbeat':
+              type: string
+              description: Keep the session alive.
+              example: "/sessionService/sessions/0/actions/heartbeat"
+      example:
+        {
+          "@id": "/sessionService/sessions/0",
+          "id": "0",
+          "account": "/accountService/userProviders/local/accounts/1",
+          "interface": {
+            "application": "web",
+            "network": "192.168.0.1",
+            "physical": "eth0"
+          },
+          "actions": {
+            "#heartbeat": "/sessionService/sessions/0/actions/heartbeat"
+          }
+        }
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
