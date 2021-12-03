@@ -175,8 +175,8 @@ std::string getJsonAlert(tntdb::Connection connection, fty_proto_t* alert)
     // TBD Workaround for IPMPROG-1729: Replace all occurrences of ename value with correct friendly name
     // ... "ename": { "value":"<ename_to_replace>", "assetLink":"ups-xxxxxx" } ...
     auto updateDescription = [asset_element_names](std::string description) -> std::string {
-        // caution: inverse search for regex_match (last found  in first)
-        const static std::regex reg(R"xxx((.*\ename\")([:{ ]*\"value\"[:\" ]*)([^\"]*)(\".*))xxx"/*, std::regex_constants::nosubs*/ /*, std::regex::optimize*/);
+        // caution: inverse search for regex_match (last found in first)
+        const static std::regex reg(R"xxx((.*\ename\")([:{ ]*\"value\"[:\" ]*)([^\"]*)(\".*))xxx");
         std::string res;
         std::smatch matches;
         std::string search = description;
