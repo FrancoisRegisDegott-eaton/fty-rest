@@ -172,6 +172,23 @@ std::string getJsonAlert(tntdb::Connection connection, fty_proto_t* alert)
         return json;
     }
 
+    // TBD Workaround for IPMPROG-1729: Replace all occurrences of ename value with correct friendly name
+    // ... "ename": { "value":"<ename_to_replace>", "assetLink":"ups-xxxxxx" } ...
+    auto updateDescription = [asset_element_names](std::string description) -> std::string {
+        // caution: inverse search for regex_match (last found  in first)
+        const static std::regex reg(R"xxx((.*\ename\")([:{ ]*\"value\"[:\" ]*)([^\"]*)(\".*))xxx"/*, std::regex_constants::nosubs*/ /*, std::regex::optimize*/);
+        std::string res;
+        std::smatch matches;
+        std::string search = description;
+        while (std::regex_match(search, matches, reg) && matches.size() == 5) {
+            //logDebug("match1={} match2={} match3={} match4={}", matches.str(1), matches.str(2), matches.str(3), matches.str(4));
+            res = matches.str(2) + asset_element_names.second + matches.str(4) + res;
+            search = matches.str(1);
+        }
+        res = search + res;
+        return res;
+    };
+
     json += "{";
 
     json += utils::json::jsonify("timestamp", buff) + ",";
@@ -182,7 +199,7 @@ std::string getJsonAlert(tntdb::Connection connection, fty_proto_t* alert)
     json += utils::json::jsonify("element_sub_type", utils::strip(asset_element.item.subtype_name)) + ",";
     json += utils::json::jsonify("state", fty_proto_state(alert)) + ",";
     json += utils::json::jsonify("severity", fty_proto_severity(alert)) + ",";
-    json += utils::json::jsonify("description", fty_proto_description(alert));
+    json += utils::json::jsonify("description", updateDescription(fty_proto_description(alert)));
     const char* md = fty_proto_metadata(alert); // assume json object payload if !empty
     json += "," + utils::json::jsonify("metadata", ((md && (*md)) ? md : "{}"));
     json += "}";
