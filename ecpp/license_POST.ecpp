@@ -31,7 +31,9 @@
 #include <fstream>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <tntdb.h>
+#include <tnt/tntconfig.h>
 
 #include "shared/utils.h"
 #include "cleanup.h"
@@ -142,7 +144,45 @@ bool database_ready;
             log_error(ret.error().c_str());
             http_die("internal-error", ret.error().c_str());
         }
-        auto rv_svc = proc.wait(15000);
+
+        // The start-db-services script ensures that all FTY/IPM2 related
+        // services and targets become active, including that the database
+        // schema gets initialized and its chain of consumers starts,
+        // and we are blocked until we "know" there is now someone running
+        // that would actually handle the backend requests for the rest of
+        // EULA wizard.
+        // So as far as we are concerned here, the script runtime can last
+        // several minutes (even if the CPU/IO/Time load is mostly elsewhere).
+        // Normally tntnet would suicide with a 10-minute request processing,
+        // unless a deadman timer is tickled to confirm we are stoll alive.
+        // This can be tuned with maxRequestTime (0 to disable the watchdog)
+        // or handled safely with a loop sleeping, checking that the script
+        // still runs, and tickling tntnet::Worker::touch() in the known-long
+        // processing loop. It should suffice to catch `unexpected("timeout")`
+        // (child still running as of last check before time limit; no other
+        // errors) as per fty-utils::fty/process.h wording of Process::wait().
+        // the wait() would end earlier if the child process finishes:
+        int wait_cycle = 3 * 60000;
+
+        // configured in seconds
+        unsigned int mrt = tnt::TntConfig::it().maxRequestTime;
+        if (mrt > 0 && mrt < (INT_MAX / 1000)) { // if enabled at all
+            wait_cycle = static_cast<int>(mrt) * 666 ; // convert to msec and trim 2/3 for overheads
+        }
+        log_debug ("Starting db service will refresh tntnet deadman timer every %u msec", wait_cycle);
+
+repeat_start_db_services:
+        auto rv_svc = proc.wait(wait_cycle);
+        if (!rv_svc && "timeout" == rv_svc.error()) {
+            // Alas, "Expected" class deletes the assignment etc. operators,
+            // so we can not stash a value or change a variable, and have to
+            // loop old-school way with goto...
+            uint64_t tme_finish = uint64_t(::time (NULL));
+            log_info ("Starting db service takes longer than expected on this system, waiting more, timestamp=%" PRIu64 " (duration=%" PRIu64 ")" ,
+                tme_finish, (tme_finish - tme_start));
+            request.touch();
+            goto repeat_start_db_services;
+        }
         proc_out = proc.readAllStandardOutput();
         proc_err = proc.readAllStandardError();
         proc.kill();
