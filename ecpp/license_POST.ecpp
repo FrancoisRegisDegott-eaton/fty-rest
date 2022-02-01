@@ -164,146 +164,158 @@ bool database_ready;
         // the wait() would end earlier if the child process finishes:
         int wait_cycle = 3 * 60000;
 
-        // configured in seconds
+        // configured in seconds, waiting in milliseconds:
         unsigned int mrt = tnt::TntConfig::it().maxRequestTime;
         if (mrt > 0 && mrt < (INT_MAX / 1000)) { // if enabled at all
             wait_cycle = static_cast<int>(mrt) * 666 ; // convert to msec and trim 2/3 for overheads
         }
         log_debug ("Starting db service will refresh tntnet deadman timer every %u msec", wait_cycle);
 
-repeat_start_db_services:
-        auto rv_svc = proc.wait(wait_cycle);
-        if (!rv_svc && "timeout" == rv_svc.error()) {
-            // Alas, "Expected" class deletes the assignment etc. operators,
-            // so we can not stash a value or change a variable, and have to
-            // loop old-school way with goto...
+        for (;;) { // repeat_start_db_services:
+            // May finish before "wait_cycle" elapses:
+            auto rv_svc = proc.wait(wait_cycle);
             uint64_t tme_finish = uint64_t(::time (NULL));
-            log_info ("Starting db service takes longer than expected on this system, waiting more, timestamp=%" PRIu64 " (duration=%" PRIu64 ")" ,
-                tme_finish, (tme_finish - tme_start));
-            request.touch();
-            goto repeat_start_db_services;
-        }
-        proc_out = proc.readAllStandardOutput();
-        proc_err = proc.readAllStandardError();
-        proc.kill();
 
-        uint64_t tme_finish = uint64_t(::time (NULL));
-        if (rv_svc) {
-            log_info ("Starting db service completed, timestamp=%" PRIu64 " (duration=%" PRIu64 "), exit-code=%i ..." ,
-                tme_finish, (tme_finish - tme_start), *rv_svc);
-        } else {
-            log_info ("Starting db service completed, timestamp=%" PRIu64 " (duration=%" PRIu64 "), exit-code=%s ..." ,
-                tme_finish, (tme_finish - tme_start), rv_svc.error().c_str());
-        }
-        if (!rv_svc || *rv_svc != 0) {
-            log_error ("Starting of start-db-services have failed. Consult system logs");
-            log_error ("%s failed with error %s.\n===== STDOUT: =====\n%s\n===== STDERR: =====\n%s\n=====",
-                "/usr/libexec/fty/start-db-services", rv_svc.error().c_str(), proc_out.c_str (), proc_err.c_str ());
-
-            if (rv_svc.error() != "timeout") {
-                std::string err =  TRANSLATE_ME ("Starting of start-db-services have failed. Consult system logs");
-                log_error_audit ("Request CREATE license FAILED");
-                http_die ("internal-error", err.c_str ());
-            }
-            // Negative return means killed by signal, typically by our
-            // subprocess timeout handling - fall through to try using DB
-
-            {
-                std::string proc_out1, proc_err1;
-                int lastResult = 0;
-                for (int i = 0; i < 10; ++i) {
-                    fty::Process::Arguments proc_cmd = {"systemctl", "list-ipm-units", "--active", "fty-db-engine"};
-                    // This should get our "systemctl" wrapper via PATH
-
-                    auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
-
-                    if (!rv) {
-                        log_error(rv.error().c_str());
-                        log_error_audit ("Request CREATE license FAILED");
-                        http_die ("internal-error", TRANSLATE_ME ("Database software service is not running").c_str());
-                    }
-
-                    lastResult = *rv;
-                    if (*rv == 0) {
-                        break;
-                    }
-                    sleep(5);
-                }
-
-                if (lastResult != 0) {
-                    std::string message;
-                    message = "`sudo systemctl list-ipm-units --active fty-db-engine`"
-                        " failed (service is not currently active). Return value = '"
-                        + std::to_string (lastResult) + "', stderr = '" + proc_err1 + "'." ;
-                    log_error ("%s", message.c_str ());
-                    std::string err =  TRANSLATE_ME ("Database software service is not running");
-                    log_error_audit ("Request CREATE license FAILED");
-                    http_die ("internal-error", err.c_str ());
-                } else {
-                    // Not quite an error, but we want this message at the same logging level
-                    log_error ("NOTE: Although start-db-services script was killed, the fty-db-engine service is okay");
-                }
+            // Success? Fail? Keep waiting?..
+            if (!rv_svc && "timeout" == rv_svc.error()) {
+                // ...keep waiting, script is not finished:
+                log_info ("Starting db service takes longer than expected on this system, waiting more, timestamp=%" PRIu64 " (duration=%" PRIu64 ")" ,
+                    tme_finish, (tme_finish - tme_start));
+                request.touch();
+                continue; // goto repeat_start_db_services;
             }
 
+            // ...success or fail, script is finished
+            // Read the outputs:
+            proc_out = proc.readAllStandardOutput();
+            proc_err = proc.readAllStandardError();
+            // Terminate child (if any) to avoid leaks:
+            proc.kill();
 
-            {
-                std::string proc_out1, proc_err1;
-                int lastResult = 0;
-
-                // try to increase timeout..
-                for (int i = 0; i < 50; ++i) {
-                    fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-init"};
-                    // This should get our "systemctl" wrapper via PATH
-
-                    auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
-
-                    if (!rv) {
-                        log_error(rv.error().c_str());
-                        log_error_audit("--! %s", rv.error().c_str());
-                        log_error_audit ("Request CREATE license FAILED");
-                        http_die ("internal-error", TRANSLATE_ME ("Database schema was not installed or verified successfully").c_str());
-                    }
-
-                    lastResult = *rv;
-                    if (*rv == 0) {
-                        log_error_audit("is ok");
-                        break;
-                    }
-                    log_error_audit("next to check");
-                    sleep(5);
-                }
-
-                if (lastResult != 0) {
-                    std::string message = "`sudo systemctl list-ipm-units --active fty-db-init`"
-                        " failed (service is not currently active). Return value = '"
-                        + std::to_string (lastResult) + "', stderr = '" + proc_err1 + "'." ;
-                    log_error ("%s", message.c_str());
-                    log_error_audit("%s", message.c_str());
-                    std::string err =  TRANSLATE_ME ("Database schema was not installed or verified successfully");
-                    log_error_audit ("Request CREATE license FAILED");
-                    http_die ("internal-error", err.c_str ());
-                } else {
-                    // Not quite an error, but we want this message at the same logging level
-                    log_error ("NOTE: Although start-db-services script was killed, the fty-db-init service is okay");
-                }
-            }
-        }
-
-        // once done, check environment files for accessing the database
-        uint64_t tme_started = uint64_t(::time (NULL));
-        log_info ("db services were started by timestamp=%" PRIu64 ", re-reading password ...", tme_started);
-        int rv_dbcred = DBConn::dbreadcredentials ();
-        if (!rv_dbcred) {
-            std::string message;
-            if (*rv_svc != 0) {
-                message = TRANSLATE_ME ("Database password file is missing AND failed to start start-db-services. Consult system logs");
+            if (rv_svc) {
+                log_info ("Starting db service completed, timestamp=%" PRIu64 " (duration=%" PRIu64 "), exit-code=%i ..." ,
+                    tme_finish, (tme_finish - tme_start), *rv_svc);
             } else {
-                message = TRANSLATE_ME ("Database password file is missing");
+                log_info ("Starting db service completed, timestamp=%" PRIu64 " (duration=%" PRIu64 "), exit-code=%s ..." ,
+                    tme_finish, (tme_finish - tme_start), rv_svc.error().c_str());
             }
-            log_error ("%s", message.c_str ());
-            log_error_audit ("Request CREATE license FAILED");
-            http_die ("internal-error", message.c_str ());
-        }
+
+            // non-zero exit code or proc class exception:
+            if (!rv_svc || *rv_svc != 0) {
+                log_error ("Starting of start-db-services have failed. Consult system logs");
+                log_error ("%s failed with error %s.\n===== STDOUT: =====\n%s\n===== STDERR: =====\n%s\n=====",
+                    "/usr/libexec/fty/start-db-services", rv_svc.error().c_str(), proc_out.c_str (), proc_err.c_str ());
+
+                if (rv_svc.error() != "timeout") {
+                    std::string err =  TRANSLATE_ME ("Starting of start-db-services have failed. Consult system logs");
+                    log_error_audit ("Request CREATE license FAILED");
+                    http_die ("internal-error", err.c_str ());
+                }
+                // Negative return means killed by signal, typically by our
+                // subprocess timeout handling - fall through to try using DB
+
+                { // scoping for error-handling: inspect fty-db-engine (mysqld etc) service unit status:
+                    std::string proc_out1, proc_err1;
+                    int lastResult = 0;
+                    for (int i = 0; i < 10; ++i) {
+                        fty::Process::Arguments proc_cmd = {"systemctl", "list-ipm-units", "--active", "fty-db-engine"};
+                        // This should get our "systemctl" wrapper via PATH
+
+                        auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
+
+                        if (!rv) {
+                            log_error(rv.error().c_str());
+                            log_error_audit ("Request CREATE license FAILED");
+                            http_die ("internal-error", TRANSLATE_ME ("Database software service is not running").c_str());
+                        }
+
+                        lastResult = *rv;
+                        if (*rv == 0) {
+                            break;
+                        }
+                        sleep(5);
+                    }
+
+                    if (lastResult != 0) {
+                        std::string message;
+                        message = "`sudo systemctl list-ipm-units --active fty-db-engine`"
+                            " failed (service is not currently active). Return value = '"
+                            + std::to_string (lastResult) + "', stderr = '" + proc_err1 + "'." ;
+                        log_error ("%s", message.c_str ());
+                        std::string err =  TRANSLATE_ME ("Database software service is not running");
+                        log_error_audit ("Request CREATE license FAILED");
+                        http_die ("internal-error", err.c_str ());
+                    } else {
+                        // Not quite an error, but we want this message at the same logging level
+                        log_error ("NOTE: Although start-db-services script was killed, the fty-db-engine service is okay");
+                    }
+                }
+
+
+                { // scoping for error-handling: inspect fty-db-init (schema import) service unit status:
+                    std::string proc_out1, proc_err1;
+                    int lastResult = 0;
+
+                    // try to increase timeout..
+                    for (int i = 0; i < 50; ++i) {
+                        fty::Process::Arguments proc_cmd {"systemctl", "list-ipm-units", "--active", "fty-db-init"};
+                        // This should get our "systemctl" wrapper via PATH
+
+                        auto rv = fty::Process::run("sudo", proc_cmd, proc_out1, proc_err1);
+
+                        if (!rv) {
+                            log_error(rv.error().c_str());
+                            log_error_audit("--! %s", rv.error().c_str());
+                            log_error_audit ("Request CREATE license FAILED");
+                            http_die ("internal-error", TRANSLATE_ME ("Database schema was not installed or verified successfully").c_str());
+                        }
+
+                        lastResult = *rv;
+                        if (*rv == 0) {
+                            log_error_audit("is ok");
+                            break;
+                        }
+                        log_error_audit("next to check");
+                        sleep(5);
+                    }
+
+                    if (lastResult != 0) {
+                        std::string message = "`sudo systemctl list-ipm-units --active fty-db-init`"
+                            " failed (service is not currently active). Return value = '"
+                            + std::to_string (lastResult) + "', stderr = '" + proc_err1 + "'." ;
+                        log_error ("%s", message.c_str());
+                        log_error_audit("%s", message.c_str());
+                        std::string err =  TRANSLATE_ME ("Database schema was not installed or verified successfully");
+                        log_error_audit ("Request CREATE license FAILED");
+                        http_die ("internal-error", err.c_str ());
+                    } else {
+                        // Not quite an error, but we want this message at the same logging level
+                        log_error ("NOTE: Although start-db-services script was killed, the fty-db-init service is okay");
+                    }
+                }
+            } // handle if script failed
+
+            // once done, check environment files for accessing the database
+            uint64_t tme_started = uint64_t(::time (NULL));
+            log_info ("db services were started by timestamp=%" PRIu64 ", re-reading password ...", tme_started);
+            int rv_dbcred = DBConn::dbreadcredentials ();
+            if (!rv_dbcred) {
+                std::string message;
+                if (*rv_svc != 0) {
+                    message = TRANSLATE_ME ("Database password file is missing AND failed to start start-db-services. Consult system logs");
+                } else {
+                    message = TRANSLATE_ME ("Database password file is missing");
+                }
+                log_error ("%s", message.c_str ());
+                log_error_audit ("Request CREATE license FAILED");
+                http_die ("internal-error", message.c_str ());
+            }
+
+            // we get here when script completed (well or not),
+            // so finish the infinite loop:
+            break;
+        } // for deadman timer around start-db-services
+
     } else {
         // enforce reload of credentials, e.g. if timely service startup
         // had failed previously but the system has caught up by now
