@@ -177,6 +177,18 @@ bool database_ready;
         log_debug ("Starting db service will refresh tntnet deadman timer every %u msec", wait_cycle);
 
         for (;;) { // repeat_start_db_services:
+            // Read the outputs (continuously, to avoid script blocking
+            // on write() here; repeated below for endspiel):
+            while (true) {
+                std::string strerr = proc.readAllStandardError();
+                std::string strout = proc.readAllStandardOutput();
+                if (strerr.empty() && strout.empty()) {
+                    break;
+                }
+                if (!strerr.empty()) proc_err += strerr;
+                if (!strout.empty()) proc_out += strout;
+            }
+
             // May finish before "wait_cycle" elapses:
             auto rv_svc = proc.wait(wait_cycle);
             uint64_t tme_finish = uint64_t(::time (NULL));
@@ -191,9 +203,22 @@ bool database_ready;
             }
 
             // ...success or fail, script is finished
-            // Read the outputs:
-            proc_out = proc.readAllStandardOutput();
-            proc_err = proc.readAllStandardError();
+
+            // Read all of the buffers; note that fty-utils defaults the args
+            // for readFromFd() behind these methods in a way that it would
+            // only try twice. So much for "all" in the name. Loop until dry
+            // (otherwise after some traffic the script effectively blocks
+            // when it is not milked away):
+            while (true) {
+                std::string strerr = proc.readAllStandardError();
+                std::string strout = proc.readAllStandardOutput();
+                if (strerr.empty() && strout.empty()) {
+                    break;
+                }
+                if (!strerr.empty()) proc_err += strerr;
+                if (!strout.empty()) proc_out += strout;
+            }
+
             // Terminate child (if any) to avoid leaks:
             proc.kill();
 
