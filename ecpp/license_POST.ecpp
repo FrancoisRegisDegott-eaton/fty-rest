@@ -207,11 +207,20 @@ bool database_ready;
 
             // non-zero exit code or proc class exception:
             if (!rv_svc || *rv_svc != 0) {
+                std::string rv_svc_err;
+                if (rv_svc) {
+                    rv_svc_err = "code ";
+                    rv_svc_err += std::to_string(*rv_svc);
+                } else {
+                    rv_svc_err = rv_svc.error();
+                }
+
                 log_error ("Starting of start-db-services have failed. Consult system logs");
                 log_error ("%s failed with error %s.\n===== STDOUT: =====\n%s\n===== STDERR: =====\n%s\n=====",
-                    "/usr/libexec/fty/start-db-services", rv_svc.error().c_str(), proc_out.c_str (), proc_err.c_str ());
+                    "/usr/libexec/fty/start-db-services",
+                    rv_svc_err.c_str(), proc_out.c_str(), proc_err.c_str());
 
-                if (rv_svc.error() != "timeout") {
+                if (!rv_svc && rv_svc.error() != "timeout") {
                     std::string err =  TRANSLATE_ME ("Starting of start-db-services have failed. Consult system logs");
                     log_error_audit ("Request CREATE license FAILED");
                     http_die ("internal-error", err.c_str ());
