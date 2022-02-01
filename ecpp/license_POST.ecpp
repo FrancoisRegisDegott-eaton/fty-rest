@@ -132,12 +132,17 @@ bool database_ready;
         log_info ("Starting db service, timestamp=%" PRIu64 " ..." , tme_start);
         std::string proc_out, proc_err;
 
+        // Just a short sleep first: hopefully systemd would already
+        // pick up the appearance of touch-file and begin handling FLA:
         sleep(10);
 
         // due to some OS circumstances, the script can sometimes block
         // while calling the /bin/systemctl and is eventually killed,
         // even though the actual services of our product have started
-        // long before this; so even if it failed - try to use the DB...
+        // long before this; so even if it failed - we would try to use
+        // the DB opportunistically... Still, better to know we have
+        // all the backend services running that are needed for EULA
+        // wizard and beyond!
         fty::Process proc("/usr/libexec/fty/start-db-services", {}, fty::Capture::Out | fty::Capture::Err);
         if (auto ret = proc.run(); !ret) {
             log_error("Starting of start-db-services have failed. Consult system logs");
