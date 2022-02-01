@@ -180,8 +180,8 @@ bool database_ready;
             // Read the outputs (continuously, to avoid script blocking
             // on write() here; repeated below for endspiel):
             while (true) {
-                std::string strerr = proc.readAllStandardError();
-                std::string strout = proc.readAllStandardOutput();
+                std::string strerr = proc.readAllStandardError(100);
+                std::string strout = proc.readAllStandardOutput(100);
                 if (strerr.empty() && strout.empty()) {
                     break;
                 }
@@ -211,8 +211,8 @@ bool database_ready;
             // (otherwise after some traffic the script effectively blocks
             // when it is not milked away):
             while (true) {
-                std::string strerr = proc.readAllStandardError();
-                std::string strout = proc.readAllStandardOutput();
+                std::string strerr = proc.readAllStandardError(100);
+                std::string strout = proc.readAllStandardOutput(100);
                 if (strerr.empty() && strout.empty()) {
                     break;
                 }
