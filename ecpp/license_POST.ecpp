@@ -167,13 +167,22 @@ bool database_ready;
         // (child still running as of last check before time limit; no other
         // errors) as per fty-utils::fty/process.h wording of Process::wait().
         // the wait() would end earlier if the child process finishes:
-        int wait_cycle = 3 * 60000;
+
+        // Use shorter loops to avoid long wait if script is stuck flushing
+        // its output:
+        int wait_cycle = 5000;
+
+#if 0
+        // Override to longer waits... at a risk of longer unblocking of
+        // stuck write() calls in child process:
+        wait_cycle = 3 * 60000;
 
         // configured in seconds, waiting in milliseconds:
         unsigned int mrt = tnt::TntConfig::it().maxRequestTime;
         if (mrt > 0 && mrt < (INT_MAX / 1000)) { // if enabled at all
             wait_cycle = static_cast<int>(mrt) * 666 ; // convert to msec and trim 2/3 for overheads
         }
+#endif
         log_debug ("Starting db service will refresh tntnet deadman timer every %u msec", wait_cycle);
 
         for (;;) { // repeat_start_db_services:
