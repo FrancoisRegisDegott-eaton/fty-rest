@@ -203,6 +203,7 @@ bool database_ready;
             }
 
             // ...success or fail, script is finished
+            log_info ("Starting db service helper script has finished, collecting results");
 
             // Read all of the buffers; note that fty-utils defaults the args
             // for readFromFd() behind these methods in a way that it would
