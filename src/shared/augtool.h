@@ -32,11 +32,8 @@
 class augtool
 {
 public:
-    /// Singleton get_instance method
-    static augtool* get_instance();
-
-    /// Runs command without returning anything
-    void run_cmd(std::string cmd);
+    /// Singleton get_instance method (w/ privileges escalation option)
+    static augtool* get_instance(bool sudoer);
 
     /// Method returning parsed output of augtool
     ///
@@ -48,15 +45,20 @@ public:
     /// @param sep used to separate individual values
     /// @param filter values for which it returns true are omitted
     std::string get_cmd_out(
-        std::string                      cmd,
+        const std::string&               cmd,
         bool                             key_value = true,
-        std::string                      sep       = "",
-        std::function<bool(std::string)> filter    = [](const std::string) -> bool {
-            return false;
-        });
+        const std::string&               sep       = "",
+        std::function<bool(std::string)> filter    = [](const std::string) -> bool { return false; }
+    );
 
     /// Return string directly as returned from augtool
-    std::string get_cmd_out_raw(std::string cmd);
+    std::string get_cmd_out_raw(const std::string& cmd);
+
+    /// Runs command without returning anything
+    void run_cmd(const std::string& cmd)
+    {
+        get_cmd_out_raw(cmd);
+    }
 
     /// Saves current state
     void save()
@@ -65,11 +67,13 @@ public:
     }
 
 protected:
-    std::mutex    mux; //!< Shared mutex
-    fty::Process* prc; //!< Subprocess itself
+    std::mutex    m_cmd_mutex; //!< Shared mutex, to protect cmd overlap
+    fty::Process* m_process{nullptr}; //!< Subprocess itself
 
     /// Ensures we are in reasonably clean state
-    void clear();
-    augtool();
-    bool init();
+    augtool(bool sudoer) noexcept;
+    bool init(bool sudoer) noexcept;
+    bool initialized();
+
+    void load();
 };
