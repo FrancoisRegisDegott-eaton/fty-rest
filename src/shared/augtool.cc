@@ -40,13 +40,14 @@ std::string augtool::get_cmd_out_raw(const std::string& cmd)
 {
     std::lock_guard<std::mutex> lock(m_cmd_mutex);
 
-    auto command{cmd};
-    if (command.empty() || (command.back() != '\n')) {
-        command += "\n";
-    }
+    std::string ret; // empty, default
 
-    std::string ret; // empty
     if (m_process) {
+        auto command{cmd};
+        if (command.empty() || (command.back() != '\n')) {
+            command += "\n";
+        }
+
         auto writeSuccess = m_process->write(command);
         ret = m_process->readAllStandardOutput(500);
         if (!writeSuccess) {
@@ -59,18 +60,17 @@ std::string augtool::get_cmd_out_raw(const std::string& cmd)
 // execute cmd, returns post-processed output
 std::string augtool::get_cmd_out(
     const std::string& cmd,
-    bool key_value, // process only key=value output
+    bool key_value, // process only '<key> = <value>' output
     const std::string& sep, // list separator
     std::function<bool(std::string)> filter // returns true to exclude value
 )
 {
-    logDebug("get_cmd_out(), cmd: '{}', key_value: {}, sep: '{}'", cmd, key_value, sep);
+    logDebug("augtool: '{}', key_value: {}, sep: '{}'", cmd, key_value, sep);
 
     // execute the command
     std::string cmdOutput = get_cmd_out_raw(cmd);
-    logTrace("cmd output: '{}'", cmdOutput);
 
-    // split output to lines
+    // split output into lines
     std::vector<std::string> lines = fty::split(cmdOutput, "\n");
 
     std::string ret; // empty, default
@@ -83,10 +83,6 @@ std::string augtool::get_cmd_out(
 
         // built ret
         for (auto line : lines) {
-            if (line.empty()) { // inconsistent?
-                logDebug("received an empty line from cmd!");
-            }
-
             auto pos = line.find_first_of("=");
             if (pos != std::string::npos) {
                 // extract value (right of '=' leaving 1st space)
@@ -94,7 +90,7 @@ std::string augtool::get_cmd_out(
             }
             else {
                 if (key_value) { // key_value only?
-                    continue; // ignore non '<key> = <value>' line
+                    continue; // ignore not '<key> = <value>' line
                 }
             }
 
@@ -103,11 +99,15 @@ std::string augtool::get_cmd_out(
                 continue; // ignore line
             }
 
+            if (line.empty()) { // inconsistent?
+                logDebug("adding an empty line!");
+            }
+
             ret += (ret.empty() ? "" : sep) + line;
         }
     }
 
-    logDebug("get_cmd_out(), cmd: '{}', ret: '{}'", cmd, ret);
+    logDebug("augtool: '{}', ret: '{}'", cmd, ret);
     return ret;
 }
 
@@ -117,7 +117,8 @@ augtool* augtool::get_instance(bool sudoer)
     static augtool instance_sudoer(true); // privileges escalation
     static augtool instance_nopriv(false); // no escalation
 
-    logDebug("get_instance(), sudoer: {}", sudoer);
+    logInfo("augtool get_instance(), sudoer: {}", sudoer);
+
     auto instance = sudoer ? &instance_sudoer : &instance_nopriv;
     return instance->initialized() ? instance : nullptr;
 }

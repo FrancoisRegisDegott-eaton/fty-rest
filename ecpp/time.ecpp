@@ -117,7 +117,7 @@ UserInfo user;
     }
     // input arguments sanitization end
 
-    const bool sudoer = (request.getMethod () != "GET"); // require sudo privileges?
+    const bool sudoer = (request.getMethod () != "GET"); // augtool require sudo privileges?
     augtool* augeas = augtool::get_instance (sudoer);
     if (!augeas) {
         std::string err =  TRANSLATE_ME ("Cannot communicate with augtool. Is it installed or properly configured?");

@@ -59,7 +59,7 @@ if (request.getMethod () == "PUT")
 
 CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.empty () ? nullptr : audit_msg.c_str ());
 
-const bool sudoer = (request.getMethod () != "GET"); // require sudo privileges?
+const bool sudoer = (request.getMethod () != "GET"); // augtool require sudo privileges?
 augtool* augeas = augtool::get_instance (sudoer);
 if (!augeas) {
     std::string err = TRANSLATE_ME ("Cannot communicate with augtool. Is it installed or properly configured?");
@@ -193,7 +193,7 @@ if (request.getMethod () == "PUT") {
     }
 
 // Gets configuration from json and sets it in config while verifying it matches regexp
-#define AUG_SET(NAME, CHECK)         \
+#define AUG_SET(NAME, CHECK)  \
     if (it.name () == NAME) { \
         it.getValue (val); \
         if (! CHECK ) { \
@@ -212,7 +212,8 @@ if (request.getMethod () == "PUT") {
         bool handled = false;
 
         AUG_SET ("method",  rex_method.match (method));
-        AUG_GET ("method",  method);
+        AUG_GET ("method",  method); //ZZZ how many times do we augtool::get 'method' (useless/timeless calls)!?
+
         AUG_SET ("address", (CIDRAddress (val).valid ()     && method == "static"));
         AUG_SET ("netmask", (CIDRAddress (val).isNetmask () && method == "static"));
 
@@ -297,7 +298,8 @@ if (request.getMethod () == "PUT") {
             log_error_audit ("Request CREATE OR UPDATE netcfg FAILED");
             http_die ("bad-request-document", msg.c_str ());
         }
-    }
+    } //for
+#undef AUG_SET
 
     // Commit everything
     augeas->save ();
@@ -326,6 +328,8 @@ AUG_GET ("method", method);
 AUG_GET ("address", ip);
 AUG_GET ("netmask", netmask);
 AUG_GET ("gateway", gateway);
+
+#undef AUG_GET
 
 std::string dns;
 if (request.getMethod() == "PUT")
