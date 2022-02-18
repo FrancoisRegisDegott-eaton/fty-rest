@@ -23,118 +23,164 @@
  * \author Michal Hrusecky <MichalHrusecky@Eaton.com>
  * \brief Not yet documented file
  */
+#include <fty/string-utils.h>
+#include <fty_log.h>
 #include <vector>
+#include <set>
 #include <string>
 #include <functional>
-#include <fty/string-utils.h>
 #include <mutex>
 #include <thread>
 #include <chrono>
-#include <fty_log.h>
 
 #include "shared/augtool.h"
 
-//using namespace shared;
+// execute cmd, returns raw output
+std::string augtool::get_cmd_out_raw(const std::string& cmd)
+{
+    std::lock_guard<std::mutex> lock(m_cmd_mutex);
 
-std::string augtool::get_cmd_out(std::string cmd, bool key_value,
-                                 std::string sep,
-                                 std::function<bool(std::string)> filter) {
-    std::string in = get_cmd_out_raw(cmd);
-    std::vector<std::string> spl = fty::split(in, "\n");
-    bool not_first = false;
-    std::string out;
-    if(spl.size() >= 3) {
-        spl.erase(spl.begin());
-        spl.pop_back();
-    } else {
-        return out;
-    }
-    for(auto i : spl) {
-        auto pos = i.find_first_of("=");
-        if(pos == std::string::npos) {
-            if(key_value)
-                continue;
-            if(not_first)
-                out += sep;
-            if(filter(i))
-                continue;
-            out += i;
-        } else {
-            if(not_first)
-                out += sep;
-            if(filter(i.substr(pos+2)))
-                continue;
-            out += i.substr(pos+2);
-        }
-        not_first = true;
-    }
-    return out;
-}
+    std::string ret; // empty, default
 
-
-std::string augtool::get_cmd_out_raw(std::string command) {
-    std::string ret;
-    bool err = false;
-
-    std::lock_guard<std::mutex> lock(mux);
-    if (init()) {
-        if(command.empty() || command.back() != '\n') {
+    if (m_process) {
+        auto command{cmd};
+        if (command.empty() || (command.back() != '\n')) {
             command += "\n";
         }
 
-        if(!prc->write(command)) {
-            err = true;
+        auto writeSuccess = m_process->write(command);
+        ret = m_process->readAllStandardOutput(500);
+        if (!writeSuccess) {
+            ret.clear();
+        }
+    }
+    return ret;
+}
+
+// execute cmd, returns post-processed output
+std::string augtool::get_cmd_out(
+    const std::string& cmd,
+    bool key_value, // process only '<key> = <value>' output
+    const std::string& sep, // list separator
+    std::function<bool(std::string)> filter // returns true to exclude value
+)
+{
+    logDebug("augtool: '{}', key_value: {}, sep: '{}'", cmd, key_value, sep);
+
+    // execute the command
+    std::string cmdOutput = get_cmd_out_raw(cmd);
+
+    // split output into lines
+    std::vector<std::string> lines = fty::split(cmdOutput, "\n");
+
+    std::string ret; // empty, default
+
+    // expect at least 3 lines
+    if (lines.size() >= 3) {
+        // remove first and last prompts lines ("match...", "augtool>")
+        lines.erase(lines.begin());
+        lines.pop_back();
+
+        // built ret
+        for (auto line : lines) {
+            auto pos = line.find_first_of("=");
+            if (pos != std::string::npos) {
+                // extract value (right of '=' leaving 1st space)
+                line = line.substr(pos + 2);
+            }
+            else {
+                if (key_value) { // key_value only?
+                    continue; // ignore not '<key> = <value>' line
+                }
+            }
+
+            // apply exclusion filter
+            if (filter(line)) {
+                continue; // ignore line
+            }
+
+            if (line.empty()) { // inconsistent?
+                logDebug("adding an empty line!");
+            }
+
+            ret += (ret.empty() ? "" : sep) + line;
+        }
+    }
+
+    logDebug("augtool: '{}', ret: '{}'", cmd, ret);
+    return ret;
+}
+
+// returns process instance
+augtool* augtool::get_instance(bool sudoer)
+{
+    static augtool instance_sudoer(true); // privileges escalation
+    static augtool instance_nopriv(false); // no escalation
+
+    logInfo("augtool get_instance(), sudoer: {}", sudoer);
+
+    auto instance = sudoer ? &instance_sudoer : &instance_nopriv;
+    return instance->initialized() ? instance : nullptr;
+}
+
+augtool::augtool(bool sudoer) noexcept
+{
+    init(sudoer);
+}
+
+bool augtool::init(bool sudoer) noexcept
+{
+    try {
+        if (m_process) { // once
+            return true;
         }
 
-        ret = prc->readAllStandardOutput(500);
-        return err ? "" : ret;
-    }
-    return "";
-}
+        m_process = (sudoer)
+            ? new fty::Process("sudo",    {"augtool", "-S", "-I/usr/share/fty/lenses", "-e"})
+            : new fty::Process("augtool", {           "-S", "-I/usr/share/fty/lenses", "-e"});
 
-void augtool::run_cmd(std::string cmd) {
-    get_cmd_out_raw(cmd);
-}
+        if (!m_process) {
+            throw std::runtime_error("new failed");
+        }
 
-static std::mutex clear_mux;
-
-void augtool::clear() {
-    std::lock_guard<std::mutex> lock(clear_mux);
-    run_cmd("");
-    run_cmd("load");
-}
-
-augtool* augtool::get_instance() {
-    static augtool inst;
-    return &inst;
-}
-
-augtool::augtool()
-{
-    logDebug("new Process");
-    init();
-}
-
-bool augtool::init()
-{
-    if (prc) {
-        return true;
-    }
-
-    prc = new fty::Process("sudo", {"augtool", "-S", "-I/usr/share/fty/lenses", "-e"});
-
-    if(!prc->exists()) {
-        if (prc->run()) {
-            std::string nil = get_cmd_out_raw("help");
-            if(nil.find("match") == nil.npos) {
-                logError("augtool returned unexpected output {}", nil);
-                delete prc;
-                prc = NULL;
-                return false;
+        if (!m_process->exists()) {
+            if (auto ret = m_process->run()) {
+                std::string output = get_cmd_out_raw("help");
+                if (output.find("match") == output.npos) {
+                    throw std::runtime_error("unexpected help payload");
+                }
+            }
+            else {
+                throw std::runtime_error("run failed (" + ret.error() + ")");
             }
         }
+
+        load();
+
+        logDebug("augtool init succeeded (sudoer: {})", sudoer);
+        return true;
+    }
+    catch (const std::exception& e) {
+        logFatal("augtool init (sudoer: {}) caught exception (e: {})", sudoer, e.what());
     }
 
-    clear();
-    return true;
+    if (m_process) {
+        delete m_process;
+        m_process = nullptr;
+    }
+    return false;
+}
+
+bool augtool::initialized()
+{
+    return (m_process != nullptr);
+}
+
+void augtool::load()
+{
+    static std::mutex load_mutex;
+    std::lock_guard<std::mutex> lock(load_mutex);
+
+    run_cmd("");
+    run_cmd("load");
 }

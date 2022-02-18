@@ -117,7 +117,8 @@ UserInfo user;
     }
     // input arguments sanitization end
 
-    augtool* augeas = augtool::get_instance ();
+    const bool sudoer = (request.getMethod () != "GET"); // augtool require sudo privileges?
+    augtool* augeas = augtool::get_instance (sudoer);
     if (!augeas) {
         std::string err =  TRANSLATE_ME ("Cannot communicate with augtool. Is it installed or properly configured?");
         if (request.getMethod () == "POST")
@@ -195,18 +196,21 @@ UserInfo user;
         }
     }
 
-    char buff[32];
-    if (calendar_to_datetime (time (NULL), buff, 32) == -1) {
+    char time_out[32];
+    memset(time_out, 0, sizeof(time_out));
+    if (calendar_to_datetime (time (NULL), time_out, sizeof(time_out)) == -1) {
         std::string err =  TRANSLATE_ME ("calendar_to_datetime () failed.");
         if (request.getMethod () == "POST")
             log_error_audit ("Request CREATE time %s %s FAILED", checked_time.c_str (), checked_ntp.c_str ());
         http_die ("internal-error", err.c_str ());
     }
+
     std::string ntp_out = augeas->get_cmd_out ("get /files/etc/ntp.conf/server[1]");
+
     if (request.getMethod () == "POST")
         log_info_audit ("Request CREATE time %s %s SUCCESS", checked_time.c_str (), checked_ntp.c_str ());
 </%cpp>
 {
-    <$$ utils::json::jsonify ("time", buff) $>,
+    <$$ utils::json::jsonify ("time", time_out) $>,
     <$$ utils::json::jsonify ("ntp", ntp_out) $>
 }
