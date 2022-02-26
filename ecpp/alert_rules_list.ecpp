@@ -30,9 +30,11 @@
 #include <vector>
 #include <string>
 #include <regex>
-#include <malamute.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <iomanip>
+#include <sstream>
+#include <malamute.h>
 #include <fty_common_db_dbpath.h>
 #include <fty_common_macros.h>
 #include <fty_common_rest.h>
@@ -60,31 +62,12 @@ bool database_ready;
     };
     CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
 
-    std::string checked_type;
-    std::string checked_rule_class;
-    {
-        std::string type = qparam.param("type");
-        std::string rule_class = qparam.param("rule_class");
-
-        // type
-        if (type.empty ()) {
-            type = "all";
-        }
-        if (type != "threshold" && type != "single" && type != "pattern" && type != "all" && type != "flexible") { // unknown parameter 'type'
-            std::string expected = TRANSLATE_ME ("one of the following values ['threshold', 'single', 'pattern', 'all', 'flexible']");
-            http_die ("request-param-bad", "type", std::string ("'").append (type).append ("'").c_str (),
-                          expected.c_str ());
-        }
-        checked_type = type;
-
-        // rule_class
-        http_errors_t errors;
-        if (check_regex_text ("rule_class", rule_class, "^.{0,100}$", errors)) {
-            checked_rule_class = rule_class;
-        } else {
-            http_die_error (errors);
-        }
-    }
+    // free params
+    std::string checked_type = qparam.param("type");
+    std::string checked_rule_class = qparam.param("rule_class");
+    std::string checked_asset_type = qparam.param("asset_type");
+    std::string checked_asset_sub_type = qparam.param("asset_sub_type");
+    std::string checked_category = qparam.param("category");
 
     // connect to malamute
     MlmClientGuard client(mlm_client_new ());
@@ -105,34 +88,59 @@ bool database_ready;
         http_die ("internal-error", err.c_str ());
     }
 
-    // prepare rfc-evaluator-rules LIST message
+    const char *AGENT_DEST = (checked_type == "flexible") ? "fty-alert-flexible" : "fty-alert-engine";
+    const char* RULES_SUBJECT = "rfc-evaluator-rules";
+    const char* COMMAND = "LIST2"; // LIST version 2
+
+    // built json payload as rules filter (agent inputs)
+    std::string jsonInputs = "{";
+    {
+        std::string sep; // empty
+        if (!checked_type.empty()) {
+            jsonInputs += sep + "\"type\":\"" + checked_type + "\"";
+            sep = ",";
+        }
+        if (!checked_rule_class.empty()) {
+            jsonInputs += sep + "\"rule_class\":\"" + checked_rule_class + "\"";
+            sep = ",";
+        }
+        if (!checked_asset_type.empty()) {
+            jsonInputs += sep + "\"asset_type\":\"" + checked_asset_type + "\"";
+            sep = ",";
+        }
+        if (!checked_asset_sub_type.empty()) {
+            jsonInputs += sep + "\"asset_sub_type\":\"" + checked_asset_sub_type + "\"";
+            sep = ",";
+        }
+        if (!checked_category.empty()) {
+            jsonInputs += sep + "\"category\":\"" + checked_category + "\"";
+            sep = ",";
+        }
+    }
+    jsonInputs += "}";
+
+    // prepare rfc-evaluator-rules message
     zmsg_t* send_msg = zmsg_new ();
     if (!send_msg) {
         log_fatal ("zmsg_new() failed.");
         std::string err = TRANSLATE_ME ("zmsg_new() failed.");
         http_die ("internal-error", err.c_str ());
     }
+    zmsg_addstr (send_msg, COMMAND);
+    zmsg_addstr (send_msg, jsonInputs.c_str ());
 
-    zmsg_addstr (send_msg, "LIST");
-    zmsg_addstr (send_msg, checked_type.c_str ());
-    zmsg_addstr (send_msg, checked_rule_class.c_str ());
-
-    const char* RULES_SUBJECT = "rfc-evaluator-rules";
-    const char *AGENT_DEST = (checked_type == "flexible") ? "fty-alert-flexible" : "fty-alert-engine";
-
-    log_debug("send (LIST, %s, %s) to %s agent (subject: %s)",
-        checked_type.c_str (), checked_rule_class.c_str (),
-        AGENT_DEST, RULES_SUBJECT);
+    log_debug("send (%s, '%s') to %s agent (subject: %s)",
+        COMMAND, jsonInputs.c_str (), AGENT_DEST, RULES_SUBJECT);
 
     // Send it
-    if (mlm_client_sendto (client, AGENT_DEST, RULES_SUBJECT, NULL, 1000, &send_msg) != 0) {
+    rv = mlm_client_sendto (client, AGENT_DEST, RULES_SUBJECT, NULL, 1000, &send_msg);
+    zmsg_destroy (&send_msg); // useless
+    if (rv != 0) {
         log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
             AGENT_DEST, RULES_SUBJECT, 1000);
-        zmsg_destroy (&send_msg);
         std::string err = TRANSLATE_ME ("mlm_client_sendto() failed.");
         http_die ("internal-error", err.c_str ());
     }
-    zmsg_destroy (&send_msg); // useless
 
     // Get response
     zsock_t *pipe = mlm_client_msgpipe (client);
@@ -147,7 +155,6 @@ bool database_ready;
         std::string err = TRANSLATE_ME ("zpoller_new() failed.");
         http_die ("internal-error", err.c_str ());
     }
-
     ZmsgGuard recv_msg;
     while (true) {
         zsock_t *which = static_cast<zsock_t*>(zpoller_wait(poller, 5000));
@@ -177,28 +184,16 @@ bool database_ready;
         http_die ("internal-error", err.c_str ());
     }
 
-    // Check command. Can be LIST or ERROR
+    // Check response
+    // <COMMAND>/<jsonInputs>/rule1/../ruleN
+    // ERROR/reason
+
     ZstrGuard part (zmsg_popstr (recv_msg));
-    if (streq (part, "LIST")) {
-        part = zmsg_popstr (recv_msg);
-        // type received must be equal to type requested
-        if (checked_type.compare (part) != 0) {
-            log_error ("Unexpected reply from '%s'. Type expected = '%s', received = '%s' . Protocol: rfc-evaluator-rules; message: 1) LIST.",
-                mlm_client_sender (client), checked_type.c_str (), part.get());
-            std::string err = TRANSLATE_ME ("Received type != expected one!");
-            http_die ("internal-error", err.c_str ());
-        }
 
-        part = zmsg_popstr (recv_msg);
-        // class received must be equal to class requested
-        if (checked_rule_class.compare (part) != 0) {
-            log_error ("Unexpected reply from '%s'. rule_class expected = '%s', received = '%s' . Protocol: rfc-evaluator-rules; message: 1) LIST.",
-                mlm_client_sender (client), checked_rule_class.c_str (), part.get());
-            std::string err = TRANSLATE_ME ("Received rule_class != expected one!");
-            http_die ("internal-error", err.c_str ());
-        }
+    if (streq (part, COMMAND)) { // OK
+        part = zmsg_popstr (recv_msg); // pop replicated inputs (not checked)
 
-        part = zmsg_popstr (recv_msg);
+        log_debug ("Collecting the data:");
 
         cxxtools::SerializationInfo si;
         si.setCategory(cxxtools::SerializationInfo::Category::Array);
@@ -207,12 +202,12 @@ bool database_ready;
         std::string assetLink = "";
         std::string externalName = "";
 
-        log_debug ("Collecting the data:");
-
         const char* CAT_INTERNAL = "\"CAT_INTERNAL\"";
         const char* CAT_AUTOMATION = "\"CAT_AUTOMATION\"";
-        while (part) {
 
+        part = zmsg_popstr (recv_msg); // 1st rule or null
+        while (part)
+        {
             //we need to serialize the section
             if (!strstr(part, CAT_INTERNAL) && !strstr(part, CAT_AUTOMATION)) {
 
@@ -308,17 +303,14 @@ bool database_ready;
                 deserializer.deserialize(siRule);
             }
 
-            part = zmsg_popstr (recv_msg);
+            part = zmsg_popstr (recv_msg); // next rule
         }
 
         cxxtools::JsonSerializer serializer(reply.out());
         serializer.beautify(false);
         serializer.serialize(si).finish();
-
-        return HTTP_OK;
     }
-
-    if (streq (part, "ERROR")) {
+    else if (streq (part, "ERROR")) { // KO
         part = zmsg_popstr (recv_msg);
         if (!part) {
             log_error ("Unexpected reply from '%s'. Expected ERROR/reason. Got ERROR/(null).", mlm_client_sender (client));
@@ -326,23 +318,18 @@ bool database_ready;
             http_die ("internal-error", err.c_str ());
         }
 
-        if (streq (part, "NOT_FOUND")) {
-            log_error ("Rule type '%s' does not exist.", checked_type.c_str ());
-            std::string expected = TRANSLATE_ME ("one of the following values [ 'threshold', 'single', 'pattern', 'all', 'flexible' ] or empty");
-            http_die ("request-param-bad", "type", std::string ("'").append (checked_type).append ("'").c_str (),
-                      expected.c_str ());
-        }
+        std::stringstream quotedJsonIn;
+        quotedJsonIn << std::quoted(jsonInputs);
 
         std::string reason = part.get();
-        log_error ("rules list failed (type: '%s', class: '%s', reason: '%s')",
-            checked_type.c_str (), checked_rule_class.c_str(), reason.c_str());
-        std::string err = TRANSLATE_ME ("Error while retrieving list of rules with type = '%s': %s.", checked_type.c_str (), reason.c_str ());
+        log_error ("rules list failed (inputs: '%s', reason: '%s')", jsonInputs.c_str(), reason.c_str());
+        std::string err = TRANSLATE_ME ("Error while retrieving list of rules with '%s': %s.", quotedJsonIn.str().c_str(), reason.c_str());
         http_die ("internal-error", err.c_str ());
     }
-
-    // Message does not conform to protocol
-    log_error ("Unexptected reply from  '%s'. Does not conform to rfc-evaluator-rules.",
-        mlm_client_sender (client));
-    std::string err = TRANSLATE_ME ("Bad message.");
-    http_die ("internal-error", err.c_str ());
+    else {
+        // Message does not conform to protocol
+        log_error ("Unexpected reply from '%s'. Does not conform to %s.", mlm_client_sender (client), RULES_SUBJECT);
+        std::string err = TRANSLATE_ME ("Bad message.");
+        http_die ("internal-error", err.c_str ());
+    }
 </%cpp>
