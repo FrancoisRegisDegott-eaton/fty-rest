@@ -64,9 +64,10 @@ bool database_ready;
 
     // free params
     std::string checked_type = qparam.param("type");
-    std::string checked_rule_class = qparam.param("rule_class");
+    std::string checked_rule_class = qparam.param("rule_class"); // kept for compatibility
     std::string checked_asset_type = qparam.param("asset_type");
     std::string checked_asset_sub_type = qparam.param("asset_sub_type");
+    std::string checked_in = qparam.param("in"); // location
     std::string checked_category = qparam.param("category");
 
     // connect to malamute
@@ -110,6 +111,10 @@ bool database_ready;
         }
         if (!checked_asset_sub_type.empty()) {
             jsonInputs += sep + "\"asset_sub_type\":\"" + checked_asset_sub_type + "\"";
+            sep = ",";
+        }
+        if (!checked_in.empty()) {
+            jsonInputs += sep + "\"in\":\"" + checked_in + "\"";
             sep = ",";
         }
         if (!checked_category.empty()) {
@@ -191,7 +196,7 @@ bool database_ready;
     ZstrGuard part (zmsg_popstr (recv_msg));
 
     if (streq (part, COMMAND)) { // OK
-        part = zmsg_popstr (recv_msg); // pop replicated inputs (not checked)
+        part = zmsg_popstr (recv_msg); // pop replicated jsonInputs (not checked)
 
         log_debug ("Collecting the data:");
 
