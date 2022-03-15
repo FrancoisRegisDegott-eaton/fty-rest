@@ -89,10 +89,6 @@ bool database_ready;
         http_die ("internal-error", err.c_str ());
     }
 
-    const char *AGENT_DEST = (checked_type == "flexible") ? "fty-alert-flexible" : "fty-alert-engine";
-    const char* RULES_SUBJECT = "rfc-evaluator-rules";
-    const char* COMMAND = "LIST2"; // LIST version 2
-
     // built json payload as rules filter (agent inputs)
     std::string jsonInputs = "{";
     {
@@ -124,217 +120,242 @@ bool database_ready;
     }
     jsonInputs += "}";
 
-    // prepare rfc-evaluator-rules message
-    zmsg_t* send_msg = zmsg_new ();
-    if (!send_msg) {
-        log_fatal ("zmsg_new() failed.");
-        std::string err = TRANSLATE_ME ("zmsg_new() failed.");
-        http_die ("internal-error", err.c_str ());
+    // set address destinations related to type ('all' induce multiple requests)
+    std::vector<std::string> destinations;
+    if (checked_type.empty() || checked_type == "all") {
+        destinations.push_back("fty-alert-engine");
+        destinations.push_back("fty-alert-flexible");
     }
-    zmsg_addstr (send_msg, COMMAND);
-    zmsg_addstr (send_msg, jsonInputs.c_str ());
-
-    log_debug("send (%s, '%s') to %s agent (subject: %s)",
-        COMMAND, jsonInputs.c_str (), AGENT_DEST, RULES_SUBJECT);
-
-    // Send it
-    rv = mlm_client_sendto (client, AGENT_DEST, RULES_SUBJECT, NULL, 1000, &send_msg);
-    zmsg_destroy (&send_msg); // useless
-    if (rv != 0) {
-        log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
-            AGENT_DEST, RULES_SUBJECT, 1000);
-        std::string err = TRANSLATE_ME ("mlm_client_sendto() failed.");
-        http_die ("internal-error", err.c_str ());
+    else if (checked_type == "flexible") {
+        destinations.push_back("fty-alert-flexible");
+    }
+    else { // default (threshold, single, pattern, ...)
+        destinations.push_back("fty-alert-engine");
     }
 
-    // Get response
-    zsock_t *pipe = mlm_client_msgpipe (client);
-    if (!pipe) {
-        log_fatal ("mlm_client_msgpipe() failed.");
-        std::string err = TRANSLATE_ME ("mlm_client_msgpipe() failed.");
-        http_die ("internal-error", err.c_str ());
-    }
-    ZpollerGuard poller(zpoller_new (pipe, NULL));
-    if (!poller) {
-        log_fatal ("zpoller_new() failed.");
-        std::string err = TRANSLATE_ME ("zpoller_new() failed.");
-        http_die ("internal-error", err.c_str ());
-    }
-    ZmsgGuard recv_msg;
-    while (true) {
-        zsock_t *which = static_cast<zsock_t*>(zpoller_wait(poller, 5000));
-        if (which) {
-            recv_msg = mlm_client_recv (client);
-        }
-        if (!recv_msg) {
-            if (zpoller_expired (poller)) {
-                log_error ("zpoller_wait(timeout = 5000) timed out waiting for message.");
-                std::string err = TRANSLATE_ME ("Timed out waiting for message.");
+    // list of rules received from agents
+    cxxtools::SerializationInfo siReply;
+    siReply.setCategory(cxxtools::SerializationInfo::Category::Array);
+
+    // request agents, append siReply
+    for (auto& destination : destinations)
+    {
+        const char* RULES_SUBJECT = "rfc-evaluator-rules";
+        const char* COMMAND = "LIST2"; // LIST version 2
+
+        // Send message
+        {
+            // prepare rfc-evaluator-rules message
+            zmsg_t* msg = zmsg_new ();
+            if (!msg) {
+                log_fatal ("zmsg_new() failed.");
+                std::string err = TRANSLATE_ME ("zmsg_new() failed.");
                 http_die ("internal-error", err.c_str ());
             }
-            log_error ("mlm_client_recv() failed.");
-            std::string err = TRANSLATE_ME ("mlm_client_recv() failed.");
-            http_die ("internal-error", err.c_str ());
+            zmsg_addstr (msg, COMMAND);
+            zmsg_addstr (msg, jsonInputs.c_str ());
+
+            log_debug("send (%s, '%s') to %s agent (subject: %s)",
+                COMMAND, jsonInputs.c_str (), destination.c_str(), RULES_SUBJECT);
+
+            // Send it
+            rv = mlm_client_sendto (client, destination.c_str(), RULES_SUBJECT, NULL, 1000, &msg);
+            zmsg_destroy (&msg); // useless
+            if (rv != 0) {
+                log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
+                    destination.c_str(), RULES_SUBJECT, 1000);
+                std::string err = TRANSLATE_ME ("mlm_client_sendto() failed.");
+                http_die ("internal-error", err.c_str ());
+            }
         }
-        if (streq (mlm_client_sender (client), AGENT_DEST))
-            break;
-    }
 
-    // Got it
-    // Check subject
-    if (!streq (mlm_client_subject (client), RULES_SUBJECT)) {
-        log_error ("Unexpected reply from '%s'. Subject expected = '%s', received = '%s'.",
-            mlm_client_sender (client), RULES_SUBJECT, mlm_client_subject (client));
-        std::string err = TRANSLATE_ME ("Bad message.");
-        http_die ("internal-error", err.c_str ());
-    }
-
-    // Check response
-    // <COMMAND>/<jsonInputs>/rule1/../ruleN
-    // ERROR/reason
-
-    ZstrGuard part (zmsg_popstr (recv_msg));
-
-    if (streq (part, COMMAND)) { // OK
-        part = zmsg_popstr (recv_msg); // pop replicated jsonInputs (not checked)
-
-        log_debug ("Collecting the data:");
-
-        cxxtools::SerializationInfo si;
-        si.setCategory(cxxtools::SerializationInfo::Category::Array);
-
-        //variables for assetLink and ename
-        std::string assetLink = "";
-        std::string externalName = "";
-
-        const char* CAT_INTERNAL = "\"CAT_INTERNAL\"";
-        const char* CAT_AUTOMATION = "\"CAT_AUTOMATION\"";
-
-        part = zmsg_popstr (recv_msg); // 1st rule or null
-        while (part)
+        // Get response
+        ZmsgGuard recv_msg;
         {
-            //we need to serialize the section
-            if (!strstr(part, CAT_INTERNAL) && !strstr(part, CAT_AUTOMATION)) {
-
-                std::string data(part.get());
-
-                //log_debug ("Part: %s \n\n", data.c_str());
-
-                // recover the ename JSON => \"ename\" : { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
-                // Be careful: the ename section is a JSON inside an JSON attribut.
-
-                std::size_t found = data.find("\\\"ename\\\"");
-                if (found != std::string::npos) {
-                    try {
-                        //we have an ename section. Extract { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
-                        std::size_t start = data.find("{", found);
-                        std::size_t end = data.find("}", found);
-
-                        std::string currentEname = data.substr(start, (end - start + 1));
-
-                        log_debug("Current ename: %s", currentEname.c_str());
-
-                        //get a proper json { "value" : "test", "assetLink" : "datacenter-3"}
-                        std::string enameData = std::regex_replace (currentEname ,std::regex("\\\\\""), "\"");
-
-                        log_debug("Current in JSON format: %s", enameData.c_str());
-
-                        //unserialize the section
-                        cxxtools::SerializationInfo siEname;
-                        std::stringstream input(enameData);
-                        cxxtools::JsonDeserializer deserializer(input);
-                        deserializer.deserialize(siEname);
-
-                        //recover assetLink
-                        const cxxtools::SerializationInfo& siAssetLink = siEname.getMember("assetLink");
-                        std::string tmpAssetLink;
-                        siAssetLink.getValue(tmpAssetLink);
-
-                        log_debug("Current assetLink: %s", tmpAssetLink.c_str());
-
-                        //recover the data of the asset if needed
-                        if (tmpAssetLink != assetLink)
-                        {
-                            DBAssets::name_to_extname(tmpAssetLink, externalName);
-                            assetLink = tmpAssetLink;
-                        }
-
-                        //create it manualy to match the good format { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
-                        std::string newEname = "{ \\\"value\\\" : \\\""+externalName+"\\\", \\\"assetLink\\\" : \\\""+assetLink+"\\\"}";
-
-                        log_debug("New ename: %s", newEname.c_str());
-
-                        //Replace the ename section by the correct one in the file
-                        //make a copy first
-
-                        std::string newData{data};
-
-                        size_t index = 0;
-                        while (true) {
-                            //Locate the section to replace.
-                            index = newData.find(currentEname, index);
-                            if (index == std::string::npos)
-                                break; // end of string
-
-                            // Make the replacement.
-                            newData.replace(index, currentEname.size(), newEname);
-
-                            //Advance index forward so the next iteration doesn't pick it up as well.
-                            index += newEname.size();
-                        }
-
-                        log_debug("Ename has been replaced.");
-
-                        //ensure we are able to unserialize newData
-                        {
-                            std::stringstream inputTmp(newData);
-                            cxxtools::JsonDeserializer deserializerTmp(inputTmp);
-                            cxxtools::SerializationInfo siTmp;
-                            deserializerTmp.deserialize(siTmp);
-                        }
-
-                        data = newData;
+            zsock_t *pipe = mlm_client_msgpipe (client);
+            if (!pipe) {
+                log_fatal ("mlm_client_msgpipe() failed.");
+                std::string err = TRANSLATE_ME ("mlm_client_msgpipe() failed.");
+                http_die ("internal-error", err.c_str ());
+            }
+            ZpollerGuard poller(zpoller_new (pipe, NULL));
+            if (!poller) {
+                log_fatal ("zpoller_new() failed.");
+                std::string err = TRANSLATE_ME ("zpoller_new() failed.");
+                http_die ("internal-error", err.c_str ());
+            }
+            while (true) {
+                zsock_t *which = static_cast<zsock_t*>(zpoller_wait(poller, 5000));
+                if (which) {
+                    recv_msg = mlm_client_recv (client);
+                }
+                if (!recv_msg) {
+                    if (zpoller_expired (poller)) {
+                        log_error ("zpoller_wait(timeout = 5000) timed out waiting for message.");
+                        std::string err = TRANSLATE_ME ("Timed out waiting for message.");
+                        http_die ("internal-error", err.c_str ());
                     }
-                    catch (const std::exception& e) {
-                        //ignore the change and continue
-                        log_error ("Error during replacement of ename: %s", e.what());
-                    }
-                }//if(found)
-
-                // deserialize the new data to add it in the answer json
-                cxxtools::SerializationInfo& siRule = si.addMember("");
-                std::stringstream input(data);
-                cxxtools::JsonDeserializer deserializer(input);
-                deserializer.deserialize(siRule);
+                    log_error ("mlm_client_recv() failed.");
+                    std::string err = TRANSLATE_ME ("mlm_client_recv() failed.");
+                    http_die ("internal-error", err.c_str ());
+                }
+                if (streq (mlm_client_sender (client), destination.c_str()))
+                    break;
             }
 
-            part = zmsg_popstr (recv_msg); // next rule
+            // Got it. Check subject
+            if (!streq (mlm_client_subject (client), RULES_SUBJECT)) {
+                log_error ("Unexpected reply from '%s'. Subject expected = '%s', received = '%s'.",
+                    mlm_client_sender (client), RULES_SUBJECT, mlm_client_subject (client));
+                std::string err = TRANSLATE_ME ("Bad message.");
+                http_die ("internal-error", err.c_str ());
+            }
         }
 
-        cxxtools::JsonSerializer serializer(reply.out());
-        serializer.beautify(false);
-        serializer.serialize(si).finish();
-    }
-    else if (streq (part, "ERROR")) { // KO
-        part = zmsg_popstr (recv_msg);
-        if (!part) {
-            log_error ("Unexpected reply from '%s'. Expected ERROR/reason. Got ERROR/(null).", mlm_client_sender (client));
+        // Check response
+        // <COMMAND>/<jsonInputs>/rule1/../ruleN
+        // ERROR/reason
+
+        ZstrGuard part (zmsg_popstr (recv_msg));
+
+        if (streq (part, COMMAND)) { // success
+            part = zmsg_popstr (recv_msg); // pop replicated jsonInputs (not checked)
+
+            log_debug ("Collecting the data:");
+
+            // variables for assetLink and ename
+            std::string assetLink = "";
+            std::string externalName = "";
+
+            const char* CAT_INTERNAL = "\"CAT_INTERNAL\"";
+            const char* CAT_AUTOMATION = "\"CAT_AUTOMATION\"";
+
+            // loop on rules (json payload)
+            part = zmsg_popstr (recv_msg); // mv to first rule or null
+            while (part)
+            {
+                // we need to serialize the section
+                if (!strstr(part, CAT_INTERNAL) && !strstr(part, CAT_AUTOMATION)) {
+
+                    std::string data(part.get());
+                    //log_debug ("Part: %s \n\n", data.c_str());
+
+                    // recover the ename JSON => \"ename\" : { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
+                    // Be careful: the ename section is a JSON inside a JSON attribut.
+
+                    std::size_t found = data.find("\\\"ename\\\"");
+                    if (found != std::string::npos) {
+                        try {
+                            //we have an ename section. Extract { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
+                            std::size_t start = data.find("{", found);
+                            std::size_t end = data.find("}", found);
+
+                            std::string currentEname = data.substr(start, (end - start + 1));
+
+                            log_debug("Current ename: %s", currentEname.c_str());
+
+                            //get a proper json { "value" : "test", "assetLink" : "datacenter-3"}
+                            std::string enameData = std::regex_replace (currentEname ,std::regex("\\\\\""), "\"");
+
+                            log_debug("Current in JSON format: %s", enameData.c_str());
+
+                            //unserialize the section
+                            cxxtools::SerializationInfo siEname;
+                            std::stringstream input(enameData);
+                            cxxtools::JsonDeserializer deserializer(input);
+                            deserializer.deserialize(siEname);
+
+                            //recover assetLink
+                            const cxxtools::SerializationInfo& siAssetLink = siEname.getMember("assetLink");
+                            std::string tmpAssetLink;
+                            siAssetLink.getValue(tmpAssetLink);
+
+                            log_debug("Current assetLink: %s", tmpAssetLink.c_str());
+
+                            //recover the data of the asset if needed
+                            if (tmpAssetLink != assetLink)
+                            {
+                                DBAssets::name_to_extname(tmpAssetLink, externalName);
+                                assetLink = tmpAssetLink;
+                            }
+
+                            //create it manualy to match the good format { \"value\" : \"test\", \"assetLink\" : \"datacenter-3\"}
+                            std::string newEname = "{ \\\"value\\\" : \\\""+externalName+"\\\", \\\"assetLink\\\" : \\\""+assetLink+"\\\"}";
+
+                            log_debug("New ename: %s", newEname.c_str());
+
+                            //Replace the ename section by the correct one in the file
+                            //make a copy first
+
+                            std::string newData{data};
+                            size_t index = 0;
+                            while (true) {
+                                //Locate the section to replace.
+                                index = newData.find(currentEname, index);
+                                if (index == std::string::npos)
+                                    break; // end of string
+
+                                // Make the replacement.
+                                newData.replace(index, currentEname.size(), newEname);
+
+                                //Advance index forward so the next iteration doesn't pick it up as well.
+                                index += newEname.size();
+                            }
+
+                            log_debug("Ename has been replaced.");
+
+                            //ensure we are able to unserialize newData
+                            {
+                                std::stringstream inputTmp(newData);
+                                cxxtools::JsonDeserializer deserializerTmp(inputTmp);
+                                cxxtools::SerializationInfo siTmp;
+                                deserializerTmp.deserialize(siTmp);
+                            }
+
+                            data = newData;
+                        }
+                        catch (const std::exception& e) {
+                            //ignore the change and continue
+                            log_error ("Error during replacement of ename: %s", e.what());
+                        }
+                    }//if(found)
+
+                    // deserialize the new data to add it in siReply
+                    cxxtools::SerializationInfo& siRule = siReply.addMember("");
+                    std::stringstream input(data);
+                    cxxtools::JsonDeserializer deserializer(input);
+                    deserializer.deserialize(siRule);
+                }
+
+                part = zmsg_popstr (recv_msg); // next rule
+            }//while(part)
+        }
+        else if (streq (part, "ERROR")) { // error
+            part = zmsg_popstr (recv_msg);
+            if (!part) {
+                log_error ("Unexpected reply from '%s'. Expected ERROR/reason. Got ERROR/(null).", mlm_client_sender (client));
+                std::string err = TRANSLATE_ME ("Bad message.");
+                http_die ("internal-error", err.c_str ());
+            }
+
+            std::stringstream quotedJsonIn;
+            quotedJsonIn << std::quoted(jsonInputs);
+
+            std::string reason = part.get();
+            log_error ("rules list failed (inputs: '%s', reason: '%s')", jsonInputs.c_str(), reason.c_str());
+            std::string err = TRANSLATE_ME ("Error while retrieving list of rules with '%s': %s.", quotedJsonIn.str().c_str(), reason.c_str());
+            http_die ("internal-error", err.c_str ());
+        }
+        else { // unexpected
+            // Message does not conform to protocol
+            log_error ("Unexpected reply from '%s'. Does not conform to %s.", mlm_client_sender (client), RULES_SUBJECT);
             std::string err = TRANSLATE_ME ("Bad message.");
             http_die ("internal-error", err.c_str ());
         }
+    }//for(destination)
 
-        std::stringstream quotedJsonIn;
-        quotedJsonIn << std::quoted(jsonInputs);
-
-        std::string reason = part.get();
-        log_error ("rules list failed (inputs: '%s', reason: '%s')", jsonInputs.c_str(), reason.c_str());
-        std::string err = TRANSLATE_ME ("Error while retrieving list of rules with '%s': %s.", quotedJsonIn.str().c_str(), reason.c_str());
-        http_die ("internal-error", err.c_str ());
-    }
-    else {
-        // Message does not conform to protocol
-        log_error ("Unexpected reply from '%s'. Does not conform to %s.", mlm_client_sender (client), RULES_SUBJECT);
-        std::string err = TRANSLATE_ME ("Bad message.");
-        http_die ("internal-error", err.c_str ());
-    }
+    // Here all rules are stored in siReply. Serialize it in reply.out().
+    cxxtools::JsonSerializer serializer(reply.out());
+    serializer.beautify(false);
+    serializer.serialize(siReply).finish();
 </%cpp>
