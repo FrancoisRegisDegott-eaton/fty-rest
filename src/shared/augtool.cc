@@ -116,11 +116,21 @@ augtool* augtool::get_instance(bool sudoer)
 {
     static augtool instance_sudoer(true); // privileges escalation
     static augtool instance_nopriv(false); // no escalation
+    
+    logInfo("Augtool get_instance(), sudoer: {}", sudoer);
 
-    logInfo("augtool get_instance(), sudoer: {}", sudoer);
-
+    //get the correct instance ()
     auto instance = sudoer ? &instance_sudoer : &instance_nopriv;
-    return instance->initialized() ? instance : nullptr;
+    
+    //Run the init
+    logInfo("Check that Augeas is initialise");
+    
+    if(!instance->init(sudoer)) {
+        logError("Augeas could not be initilized");
+        return nullptr;
+    }
+    
+    return instance;
 }
 
 augtool::augtool(bool sudoer) noexcept
