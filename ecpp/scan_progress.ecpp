@@ -29,113 +29,97 @@
 #include <fty_common_mlm_guards.h>
 #include <fty_common_rest_helpers.h>
 
-// progress request
-static zmsg_t *
-req_progress (zuuid_t *uuid)
-{
-    zmsg_t *msg = zmsg_new ();
-    zmsg_addstr (msg, "PROGRESS");
-    zmsg_addstr (msg, zuuid_str_canonical (uuid));
-    return msg;
-}
-
-int
-get_scan_progress (std::string &output)
+// request progress to the fty-discovery service
+// returns 0 if ok, else <0
+// if ok, output is set as the response (json payload)
+static int get_scan_progress (std::string& output)
 {
     output.clear();
 
     // connect to mlm client
     auto client = mlm_pool.get();
-    if (!client)
-    {
-        log_fatal ("scan_progress: mlm_pool.get () failed.");
+    if (!client) {
+        log_error ("scan_progress: mlm_pool.get () failed.");
         return -1;
     }
 
+    // send request
     zuuid_t *uuid = zuuid_new ();
-    zmsg_t *request = req_progress (uuid);
+    zmsg_t *request = zmsg_new ();
+    zmsg_addstr (request, "PROGRESS");
+    zmsg_addstr (request, zuuid_str_canonical (uuid));
     int rv = client->sendto ("fty-discovery", "progress", 1000, &request);
+    zmsg_destroy (&request);
 
-    if (rv == -1)
-    {
+    if (rv == -1) {
         zuuid_destroy (&uuid);
-        log_fatal ("scan_progress: client->sendto (address = '%s') failed.", "fty-discovery");
+        log_error ("scan_progress: client->sendto (address = '%s') failed.", "fty-discovery");
         return -2;
     }
 
     ZmsgGuard resp(client->recv (zuuid_str_canonical (uuid), 20));
     zuuid_destroy (&uuid);
-    if (!resp)
-    {
-        log_fatal ("info: client->recv (timeout = '20') returned NULL");
+
+    if (!resp) {
+        log_error ("scan_progress: client->recv (timeout = '20') returned NULL");
         return -3;
     }
 
     ZstrGuard result (zmsg_popstr (resp));
-    if (result) {
-        if (streq (result, "OK")) {
-            output.append ("{");
-
-            ZstrGuard status (zmsg_popstr (resp));
-            if(!status) return -5;
-            output.append ("\"status\" : \"");
-            output.append(status);
-            if(streq(status, "-1")) {
-                output.append("\"}");
-                return 0;
-            }
-            output.append("\",");
-
-            ZstrGuard progress (zmsg_popstr (resp));
-            if (!progress) return -5;
-            output.append ("\"progress\" : \"");
-            output.append (progress);
-            output.append ("%\", ");
-
-            ZstrGuard discovered (zmsg_popstr (resp));
-            if(!discovered) return -5;
-            output.append ("\"discovered\" : \"");
-            output.append(discovered);
-            output.append("\",");
-
-            ZstrGuard discovered_ups (zmsg_popstr (resp));
-            if(!discovered_ups) return -5;
-            output.append ("\"ups-discovered\" : \"");
-            output.append(discovered_ups);
-            output.append("\",");
-
-            ZstrGuard discovered_epdu (zmsg_popstr (resp));
-            if(!discovered_epdu) return -5;
-            output.append ("\"epdu-discovered\" : \"");
-            output.append(discovered_epdu);
-            output.append("\",");
-
-            ZstrGuard discovered_sts (zmsg_popstr (resp));
-            if(!discovered_sts) return -5;
-            output.append ("\"sts-discovered\" : \"");
-            output.append(discovered_sts);
-            output.append("\",");
-
-            ZstrGuard discovered_sensors (zmsg_popstr (resp));
-            if(!discovered_sensors) return -5;
-            output.append ("\"sensors-discovered\" : \"");
-            output.append(discovered_sensors);
-            output.append("\"");
-
-            output.append("}");
-        }
-        else if (streq (result, "ERROR")) {
-            return -4;
-        }
-        else {
-            return -5;
-        }
+    if (!result) {
+        log_error("scan_progress: received unexpected NULL response");
+        return -4;
     }
-    else
+    if (streq (result, "ERROR")) {
+        log_error("scan_progress: received ERROR response");
         return -5;
+    }
+    if (!streq (result, "OK")) {
+        log_error("scan_progress: received unexpected response");
+        return -6;
+    }
+
+    // here result == "OK"
+
+    ZstrGuard status (zmsg_popstr (resp));
+    if (!status) {
+        log_error("scan_progress: status is NULL");
+        return -7;
+    }
+
+    output.append("{");
+
+    output.append("\"status\": \"").append(status).append("\"");
+
+    if (!streq(status, "-1")) {
+        // scan details
+        ZstrGuard progress (zmsg_popstr (resp));
+        ZstrGuard discovered (zmsg_popstr (resp));
+        ZstrGuard discovered_ups (zmsg_popstr (resp));
+        ZstrGuard discovered_epdu (zmsg_popstr (resp));
+        ZstrGuard discovered_sts (zmsg_popstr (resp));
+        ZstrGuard discovered_sensors (zmsg_popstr (resp));
+
+        if (!progress) { log_error("scan_progress: progress is NULL"); return -7; }
+        if (!discovered) { log_error("scan_progress: discovered is NULL"); return -7; }
+        if (!discovered_ups) { log_error("scan_progress: discovered_ups is NULL"); return -7; }
+        if (!discovered_epdu) { log_error("scan_progress: discovered_epdu is NULL"); return -7; }
+        if (!discovered_sts) { log_error("scan_progress: discovered_sts is NULL"); return -7; }
+        if (!discovered_sensors) { log_error("scan_progress: discovered_sensors is NULL"); return -7; }
+
+        output.append(", \"progress\": \"").append(progress).append("%\"");
+        output.append(", \"discovered\": \"").append(discovered).append("\"");
+        output.append(", \"ups-discovered\": \"").append(discovered_ups).append("\"");
+        output.append(", \"epdu-discovered\": \"").append(discovered_epdu).append("\"");
+        output.append(", \"sts-discovered\": \"").append(discovered_sts).append("\"");
+        output.append(", \"sensors-discovered\": \"").append(discovered_sensors).append("\"");
+    }
+
+    output.append("}");
 
     return 0;
 }
+
 </%pre>
 <%request scope="global">
 UserInfo user;
@@ -143,38 +127,19 @@ UserInfo user;
 <%cpp>
     // permission check
     static const std::map <BiosProfile, std::string> PERMISSIONS = {
-            {BiosProfile::Anonymous, "R"},
-            {BiosProfile::Dashboard, "R"},
-            {BiosProfile::Admin,     "R"}
-            };
+        {BiosProfile::Anonymous, "R"},
+        {BiosProfile::Dashboard, "R"},
+        {BiosProfile::Admin,     "R"}
+    };
     CHECK_USER_PERMISSIONS_OR_DIE (PERMISSIONS);
 
     std::string output;
     int rv = get_scan_progress (output);
-    if (rv == -1) {
-        log_error("mlmpool.get () failed.");
-        http_die ("internal-error", TRANSLATE_ME("Automatic discovery service not available"));
+    if (rv != 0) {
+        log_error("get_scan_progress() failed (rv: %d)", rv);
+        std::string err = TRANSLATE_ME("Automatic discovery service not available");
+        http_die ("internal-error", err.c_str());
     }
-    else
-    if (rv == -2) {
-        log_error("client->sendto () failed.");
-        http_die ("internal-error", TRANSLATE_ME("Automatic discovery service not available"));
-    }
-    else
-    if (rv == -3) {
-        log_error("client->recv () failed.");
-        http_die ("internal-error", TRANSLATE_ME("Automatic discovery service not available"));
-    }
-    else
-    if (rv == -4) {
-        log_error("fty-discovery returned error.");
-        http_die ("internal-error", TRANSLATE_ME("Automatic discovery service not available"));
-    }
-    else
-    if (rv == -5) {
-        log_error("fty-discovery returned malformed or unexpected message.");
-        http_die ("internal-error", TRANSLATE_ME("Automatic discovery service not available"));
-    }
-    else
+
+    reply.out () << output;
 </%cpp>
-<$$ output $>
