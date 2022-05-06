@@ -61,11 +61,9 @@ public:
     }
 
     /// Saves current state
-    /// and reload content
     void save()
     {
         run_cmd("save");
-        run_cmd("load");
     }
 
 protected:
