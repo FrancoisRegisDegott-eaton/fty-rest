@@ -48,6 +48,7 @@ std::string augtool::get_cmd_out_raw(const std::string& cmd)
             command += "\n";
         }
 
+        /// execute the actual command
         auto writeSuccess = m_process->write(command);
         ret = m_process->readAllStandardOutput(500);
         if (!writeSuccess) {
@@ -130,6 +131,9 @@ augtool* augtool::get_instance(bool sudoer)
         return nullptr;
     }
     
+    /// refresh instance before returning it
+    instance->load();
+
     return instance;
 }
 
