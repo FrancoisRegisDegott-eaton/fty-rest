@@ -98,12 +98,20 @@ bool database_ready;
     }
     // Sanity check end
 
+    mlm_client_t *client = NULL;
+    zpoller_t* poller = NULL;
     std::stringstream json;
-    mlm_client_t *client;
+    bool success = false;
+
     try {
         client = mlm_client_new ();
-        if (!client)
+        if (!client) {
             throw std::runtime_error ("Can't allocate malamute client");
+        }
+        poller = zpoller_new (mlm_client_msgpipe(client), NULL);
+        if (!poller) {
+            throw std::runtime_error ("Can't allocate poller");
+        }
 
         std::string client_name = utils::generate_mlm_client_id("web.uptime");
         mlm_client_connect (client, MLM_ENDPOINT, 1000, client_name.c_str());
@@ -112,33 +120,35 @@ bool database_ready;
 
         for ( size_t D = 0 ; D < DCNames.size(); D++ )
         {
-
-            mlm_client_sendtox (
-                client,
-                "uptime",
-                "UPTIME",
-                "UPTIME",
-                DCNames[D].c_str(),
-                NULL);
-            int r;
-            char *subject, *command, *total, *offline;
-            // blocking!!!
-            r = mlm_client_recvx (client, &subject, &command, &total, &offline, NULL);
-            if (r == -1)
+            int r = mlm_client_sendtox (client, "uptime", "UPTIME", "UPTIME", DCNames[D].c_str(), NULL);
+            if (r != 0) {
                 throw std::runtime_error ("Can't send the request");
-            zstr_free(&subject);
-            zstr_free(&command);
-            if (!total || !offline) {
-                if(total)
+            }
+
+            char* total = NULL;
+            char* offline = NULL;
+            if (zpoller_wait(poller, 5000)) {
+                char* subject = NULL;
+                char* command = NULL;
+                r = mlm_client_recvx (client, &subject, &command, &total, &offline, NULL);
+                zstr_free(&subject);
+                zstr_free(&command);
+                if (r < 0) {
                     zstr_free(&total);
-                if(offline)
-                    zstr_free(&offline);    
+                    zstr_free(&offline);
+                    throw std::runtime_error ("Can't receive response");
+                }
+            }
+
+            if (!(total && offline)) {
                 log_error ("Empty reply for DC %s", DCNames[D].c_str());
+                zstr_free(&total);
+                zstr_free(&offline);
                 continue;
             }
 
             if (streq (total, "ERROR")) {
-                log_error ("Got ERROR reply from kpi-uptime: %s, skipping DC %s", offline, DCNames[D].c_str());
+                log_error ("Got ERROR reply from uptime (%s). Skipping DC %s", offline, DCNames[D].c_str());
                 zstr_free(&total);
                 zstr_free(&offline);
                 continue;
@@ -154,14 +164,20 @@ bool database_ready;
             zstr_free(&total);
             zstr_free(&offline);
         }
+
         json << "\t]\n}\n";
-        
-        mlm_client_destroy (&client);
+        success = true;
     }
     catch (const std::exception& e) {
-        mlm_client_destroy (&client);
         log_error ("%s", e.what ());
-        http_die ("internal-error", "");
     }
+
+    zpoller_destroy (&poller);
+    mlm_client_destroy (&client);
+
+    if (!success) {
+       http_die ("internal-error", "");
+    }
+
+    reply.out () << json.str();
 </%cpp>
-<$$ json.str() $>
