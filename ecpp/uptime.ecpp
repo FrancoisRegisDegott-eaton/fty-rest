@@ -139,6 +139,10 @@ bool database_ready;
                     throw std::runtime_error ("Can't receive response");
                 }
             }
+            else {
+                log_error ("Recv timed out for DC %s", DCNames[D].c_str());
+                continue;
+            }
 
             if (!(total && offline)) {
                 log_error ("Empty reply for DC %s", DCNames[D].c_str());
