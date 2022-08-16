@@ -37,59 +37,64 @@
 </%pre>
 <%cpp>
 {
-    (void)request;
     // CHECK_USER_PERMISSIONS_OR_DIE is intentionally not used, as this part should be
     // checked for any USER any URL and any METHOD
-    char *license_file = get_current_license_file ();
+
+    char *license_file = NULL;
+    char *current_license_version = NULL;
+    char *accepted_license_file = NULL;
+    #define CLEANUP { \
+        zstr_free(&license_file); \
+        zstr_free(&current_license_version); \
+        zstr_free(&accepted_license_file); \
+    }
+
+    license_file = get_current_license_file ();
     if ( license_file == NULL ) {
         std::string err =  TRANSLATE_ME ("Cannot get the path to the text of the current license");
+        CLEANUP;
         http_die ("internal-error", err.c_str ());
     }
-	log_debug("license_file='%s'", license_file);
-    char *current_license_version = get_current_license_version (license_file);
+    log_debug("license_file='%s'", license_file);
+
+    current_license_version = get_current_license_version (license_file);
     if ( current_license_version == NULL ) {
-        free (license_file); license_file = NULL;
         std::string err =  TRANSLATE_ME ("Cannot get version of the text of the current license");
+        CLEANUP;
         http_die ("internal-error", err.c_str ());
     }
 
-    char *accepted_license_file = get_accepted_license_file ();
+    accepted_license_file = get_accepted_license_file ();
     if ( accepted_license_file == NULL ) {
-        free (current_license_version); current_license_version = NULL;
-        free (license_file); license_file = NULL;
         std::string err =  TRANSLATE_ME ("Cannot get the path to the actual status of the accepted license");
+        CLEANUP;
         http_die ("internal-error", err.c_str ());
     }
-	log_debug("accepted_license_file='%s'", accepted_license_file);
+    log_debug("accepted_license_file='%s'", accepted_license_file);
 
     std::string accepted_license_version;
     std::ifstream file(accepted_license_file, std::ios::in);
-    if(file) {
+    if (file) {
         file >> accepted_license_version;
         file.close();
     }
-//    char accepted_license_version = NULL;
-//    FILE* src = fopen(accepted_license_file, "r");
-//    if ( src != NULL ) {
-//        fscanf(src,"%ms\n", &accepted_license_version);
-//        fclose(src);
-//    }
+
     if ( accepted_license_version.empty() ) {
-        free (current_license_version); current_license_version = NULL;
         std::string reason = TRANSLATE_ME ("Please accept license first.");
+        CLEANUP;
         http_die("action-forbidden", "REST API call", reason.c_str ());
     }
+
     if ( !streq(accepted_license_version.c_str(), current_license_version) ) {
         std::string msg = TRANSLATE_ME ("License version changed (new is %s, accepted is %s). Please accept new license first", current_license_version, accepted_license_version.c_str());
-        free (accepted_license_file); accepted_license_file = NULL;
-        free (current_license_version); current_license_version = NULL;
+        CLEANUP;
         http_die("action-forbidden", "REST API call", msg.c_str());
     } else {
-        free (accepted_license_file); accepted_license_file = NULL;
-        free (current_license_version); current_license_version = NULL;
+        CLEANUP;
         return DECLINED;
     }
-    free (accepted_license_file); accepted_license_file = NULL;
-    free (current_license_version); current_license_version = NULL;
+
+    CLEANUP;
+    #undef CLEANUP
 }
 </%cpp>
