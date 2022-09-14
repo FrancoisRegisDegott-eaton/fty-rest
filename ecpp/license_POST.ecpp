@@ -199,7 +199,7 @@ bool database_ready;
             }
 
             // May finish before "wait_cycle" elapses:
-            auto rv_svc = proc.wait(wait_cycle);
+            auto rv_svc = proc.wait(uint64_t(wait_cycle));
             uint64_t tme_finish = uint64_t(::time (NULL));
 
             // Success? Fail? Keep waiting?..
