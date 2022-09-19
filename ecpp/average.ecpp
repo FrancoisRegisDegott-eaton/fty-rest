@@ -308,12 +308,30 @@ bool database_ready;
                 // we got some datas?
                 if (zmsg_size(recv_msg) >= 2) {
                     if (!got_timestamps) {
-                        // first row: "type" label + timestamps receipt (index 0)
-                        csv_data.push_back (std::vector <std::string> {"type"});
+                        // first row: "Time (Sec)" label + timestamps receipt (index 0)
+                        csv_data.push_back (std::vector <std::string> {"Time (Sec)"});
                     }
 
                     // add a new row: type_rep label + datas
-                    csv_data.push_back (std::vector <std::string> {type_rep});
+
+                    std::string correctedType(type_rep);
+
+                    if(checked_source == "realpower.default")
+                    {
+                        static const std::map<std::string, std::string> typeMap = {
+                                                                                    {"arithmetic_mean", "Usage mean (Watt)"},
+                                                                                    {"min", "Usage min (Watt)"},
+                                                                                    {"max", "Usage max (Watt)"},
+                                                                                    {"consumption", "Consumption  (Watt-second)"},
+                                                                                  };
+
+                        if(typeMap.count(correctedType))
+                        {
+                            correctedType = typeMap.at(correctedType);
+                        }
+                    }
+
+                    csv_data.push_back (std::vector <std::string> {correctedType.c_str()});
                     std::size_t csvLastIndex = csv_data.size() - 1;
 
                     // fill in datas, pairs of (timestamp, value)
