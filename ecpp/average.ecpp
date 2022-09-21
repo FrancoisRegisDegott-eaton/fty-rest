@@ -48,6 +48,7 @@
 #include "shared/utilspp.h"
 #include "cleanup.h"
 #include <tntdb.h>
+#include <ctime>
 
 // Check if value of parameter 'relative' is supported:
 //  * No - return false, value of unixtime is not changed
@@ -309,7 +310,7 @@ bool database_ready;
                 if (zmsg_size(recv_msg) >= 2) {
                     if (!got_timestamps) {
                         // first row: "Time (Sec)" label + timestamps receipt (index 0)
-                        csv_data.push_back (std::vector <std::string> {"Time (Sec)"});
+                        csv_data.push_back (std::vector <std::string> {"Time (UTC)"});
                     }
 
                     // add a new row: type_rep label + datas
@@ -340,7 +341,12 @@ bool database_ready;
                         char *value = zmsg_popstr (recv_msg);
 
                         if (!got_timestamps) {
-                            csv_data [0].push_back (timestamp);
+                            time_t rawtime = atoi(timestamp);
+                            struct tm timeinfo;
+                            localtime_r(&rawtime, &timeinfo);
+                            std::string formattedDate = asctime(&timeinfo);
+                            formattedDate.pop_back(); // since asctime has the line ending character '\n'
+                            csv_data [0].push_back (formattedDate);
                         }
                         csv_data [csvLastIndex].push_back (value);
 
@@ -370,12 +376,25 @@ bool database_ready;
         //escape special characters
         element_ename = std::regex_replace(element_ename, std::regex("( |\t)"), "_");
 
+        static const std::map<std::string, std::string> srcMap = {
+                                                                   {"realpower.default", "power-usage"},
+                                                                   {"average.temperature", "temperature"},
+                                                                   {"average.humidity", "humidity"},
+                                                                 };
+
+        std::string correctedSource(checked_source);
+
+        if(srcMap.count(correctedSource))
+        {
+            correctedSource = srcMap.at(correctedSource);
+        }
+
         std::string export_file_name =
             "export_"
             + checked_start_ts + "_"
             + checked_end_ts + "_"
             + checked_step + "_"
-            + checked_source + "_"
+            + correctedSource + "_"
             + element_ename
             + ".csv";
 
