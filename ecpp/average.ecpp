@@ -48,6 +48,7 @@
 #include "shared/utilspp.h"
 #include "cleanup.h"
 #include <tntdb.h>
+#include <ctime>
 
 // Check if value of parameter 'relative' is supported:
 //  * No - return false, value of unixtime is not changed
@@ -72,6 +73,37 @@ bool relative_to_unixtime (const std::string& relative, int64_t now, int64_t& un
     return false;
 }
 
+std::string getCorrectedType(const std::string & type,const std::string & src) {
+
+    std::string result(type);
+    bool isEnvData = (src == "average.temperature") || (src == "average.humidity");
+
+    static const std::map<std::string, std::string> typeMap = {
+        {"arithmetic_mean", "Usage mean"},
+        {"min", "Usage min"},
+        {"max", "Usage max"},
+        {"consumption", "Consumption (Watt-second)"}
+    };
+
+    static const std::map<std::string, std::string> unitMap = {
+        {"realpower.default", " (Watt)"},
+        {"current.output.L1", " (A)"},
+        {"voltage.output.L1-N", " (V)"},
+        {"power.default", " (VA)"},
+        {"average.temperature", " (Celsius)"},
+        {"average.humidity", " (%)"},
+    };
+
+    if ( unitMap.count(src) ) {
+            if ( typeMap.count(result) && !isEnvData )
+                result = typeMap.at(result);
+
+            if( type != "consumption" )
+                result += unitMap.at(src);
+    }
+
+    return result;
+}
 
 </%pre>
 <%request scope="global">
@@ -308,12 +340,15 @@ bool database_ready;
                 // we got some datas?
                 if (zmsg_size(recv_msg) >= 2) {
                     if (!got_timestamps) {
-                        // first row: "type" label + timestamps receipt (index 0)
-                        csv_data.push_back (std::vector <std::string> {"type"});
+                        // first row: "Time (Sec)" label + timestamps receipt (index 0)
+                        csv_data.push_back ( std::vector <std::string> { "Time (UTC)" } );
                     }
 
                     // add a new row: type_rep label + datas
-                    csv_data.push_back (std::vector <std::string> {type_rep});
+
+                    std::string correctedType = getCorrectedType(type_rep, checked_source);
+
+                    csv_data.push_back( { correctedType } );
                     std::size_t csvLastIndex = csv_data.size() - 1;
 
                     // fill in datas, pairs of (timestamp, value)
@@ -322,7 +357,12 @@ bool database_ready;
                         char *value = zmsg_popstr (recv_msg);
 
                         if (!got_timestamps) {
-                            csv_data [0].push_back (timestamp);
+                            time_t rawtime = atoi(timestamp);
+                            struct tm timeinfo;
+                            localtime_r(&rawtime, &timeinfo);
+                            std::string formattedDate = asctime(&timeinfo);
+                            formattedDate.pop_back(); // since asctime has the line ending character '\n'
+                            csv_data [0].push_back (formattedDate);
                         }
                         csv_data [csvLastIndex].push_back (value);
 
@@ -352,12 +392,28 @@ bool database_ready;
         //escape special characters
         element_ename = std::regex_replace(element_ename, std::regex("( |\t)"), "_");
 
+        static const std::map<std::string, std::string> srcMap = {
+            {"realpower.default", "power-usage"},
+            {"average.temperature", "temperature"},
+            {"average.humidity", "humidity"},
+            {"power.default", "power"},
+            {"current.output.L1", "current-L1"},
+            {"voltage.output.L1-N", "voltage-L1"},
+        };
+
+        std::string correctedSource(checked_source);
+
+        if( srcMap.count(correctedSource) )
+        {
+            correctedSource = srcMap.at(correctedSource);
+        }
+
         std::string export_file_name =
             "export_"
             + checked_start_ts + "_"
             + checked_end_ts + "_"
             + checked_step + "_"
-            + checked_source + "_"
+            + correctedSource + "_"
             + element_ename
             + ".csv";
 
