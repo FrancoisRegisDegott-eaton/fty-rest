@@ -114,8 +114,8 @@ UserInfo user;
         http_die ("internal-error", err.c_str ());
     }
 
-    ZmsgGuard recieve (client->recv (zuuid_str_canonical (uuid) , _timeout));
-    if (!recieve)
+    ZmsgGuard receive (client->recv (zuuid_str_canonical (uuid) , _timeout));
+    if (!receive)
     {
         std::string msg = TRANSLATE_ME ("Error: client-> recv (timeout = '%d') returned NULL", _timeout);
         log_error ("%s", msg.c_str ());
@@ -123,8 +123,8 @@ UserInfo user;
         http_die ("internal-error", msg.c_str ());
     }
 
-    ZstrGuard err_code (zmsg_popstr (recieve));
-    ZstrGuard err_message (zmsg_popstr (recieve));
+    ZstrGuard err_code (zmsg_popstr (receive));
+    ZstrGuard err_message (zmsg_popstr (receive));
     const char *msg_subject = client->subject ();
     std::string status;
 
@@ -137,12 +137,14 @@ UserInfo user;
     {
         status = "Failed";
         log_error_audit ("Request CREATE email_test FAILED");
-        http_die ("upstream-err", err_message.get ());
+        log_error("Send test mail failed.\n%s", err_message.get());
+        std::string err = "Can not send email. SMTP server returned an error (Refer to more details in the logfile).";
+        http_die ("upstream-err", err.c_str());
     }
     else
     {
         status = "Failed";
-        log_fatal ("Error: message recieved with invalid subject.");
+        log_fatal ("Error: message received with invalid subject.");
         std::string err =  TRANSLATE_ME ("client->recv () invalid message subject");
         log_error_audit ("Request CREATE email_test FAILED");
         http_die ("internal-error", err.c_str ());
