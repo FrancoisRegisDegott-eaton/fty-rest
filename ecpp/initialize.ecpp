@@ -1,0 +1,39 @@
+<#
+ #
+ # Copyright (C) 2015 - 2020 Eaton
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation; either version 2 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License along
+ # with this program; if not, write to the Free Software Foundation, Inc.,
+ # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ #
+ #><#
+/*!
+ * \file initialize.ecpp
+ * \brief  Initialize library context
+ */
+ #><%pre>
+#include <fty_log.h>
+</%pre>
+<%application scope="global">
+bool g_init_logging_done = false;
+</%application>
+<%cpp>
+    if (!g_init_logging_done)
+    {
+        g_init_logging_done = true;
+        ftylog_setInstance("tntnet", FTY_COMMON_LOGGING_DEFAULT_CFG);
+        logDebug("==== ftylog initialized");
+    }
+
+    return DECLINED; // go to next mapping
+</%cpp>

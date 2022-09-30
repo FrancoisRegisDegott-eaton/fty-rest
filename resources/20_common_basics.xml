@@ -1,3 +1,7 @@
+    <!-- Initialize library context -->
+    <mapping>
+      <target>initialize@libfty_rest</target>
+    </mapping>
     <!-- We are getting authorized -->
     <mapping>
       <target>auth@libfty_rest</target>
