@@ -205,22 +205,6 @@ static bool
     return ( key.substr(0,5) == "trend" );
 }
 
-//// encode metric GET request
-//static zmsg_t*
-//s_rt_encode_GET (const char* name)
-//{
-//    static const char* method = "GET";
-//
-//    zuuid_t *uuid = zuuid_new ();
-//    zmsg_t *msg = zmsg_new ();
-//
-//    zmsg_pushmem (msg, zuuid_data (uuid), zuuid_size (uuid));
-//    zuuid_destroy (&uuid);
-//    zmsg_addstr (msg, method);
-//    zmsg_addstr (msg, name);
-//    return msg;
-//}
-
 </%pre>
 <%thread scope="global">
 asset_manager asset_mgr;
@@ -311,18 +295,6 @@ bool database_ready;
 
     std::map<std::string, std::map<std::string, std::string>> dataDc{};
 
-    // create mlm client
-//    mlm_client_t *client = mlm_client_new ();
-//    std::string client_name = utils::generate_mlm_client_id("web.dc_indicators");
-//    int rv = mlm_client_connect (client, MLM_ENDPOINT, 1000, client_name.c_str());
-//
-//    if ( rv != 0 ) {
-//        log_error ("%s: Cannot connect to malamute", client_name.c_str());
-//        mlm_client_destroy (&client);
-//        std::string err =  TRANSLATE_ME ("Cannot connect to malamute");
-//        http_die ("internal-error", err.c_str ());
-//    }
-
     // get current data for all DCs
     for ( const auto &aDc : DCNames ) {
         // fill the request message according the protocol
@@ -342,90 +314,6 @@ bool database_ready;
           }
         }
 
-//        zmsg_t *request = s_rt_encode_GET (aDc.c_str());
-//
-//        // send message
-//        rv = mlm_client_sendto (client, RT_PROVIDER_PEER, RT_SUBJECT, NULL,  1000, &request);
-//        if ( rv != 0 ) {
-//            log_error ("Cannot send message to malamute");
-//            mlm_client_destroy (&client);
-//            std::string err =  TRANSLATE_ME ("Cannot send message to malamute.");
-//            http_die ("internal-error", err.c_str ());
-//        }
-//
-//        // wait for the reply
-//        zpoller_t *poller = zpoller_new (mlm_client_msgpipe (client), NULL);
-//        if (!poller) {
-//            log_error ("zpoller_new() failed.");
-//            mlm_client_destroy (&client);
-//            std::string err =  TRANSLATE_ME ("zpoller_new() failed.");
-//            http_die ("internal-error", err.c_str ());
-//        }
-//        zmsg_t *mreply = NULL;
-//        while (true) {
-//            zsock_t *which = (zsock_t *) zpoller_wait (poller, 5000);
-//            if (which == mlm_client_msgpipe (client)) {
-//                mreply = mlm_client_recv (client);
-//                if (!mreply) {
-//                    log_error ("mlm_client_recv() failed.");
-//                    zpoller_destroy (&poller);
-//                    mlm_client_destroy (&client);
-//                    std::string err =  TRANSLATE_ME ("mlm_client_recv() failed.");
-//                    http_die ("internal-error", err.c_str ());
-//                }
-//                // check if we receive the expected message
-//                if ( streq (mlm_client_sender (client), RT_PROVIDER_PEER)) {
-//                    // yes, this is our reply
-//                    break;
-//                }
-//                // no it is trash, wait a bit more
-//                log_error ("not expected sender!! going for loop");
-//                zmsg_destroy (&mreply);
-//            }
-//            // no message was received
-//            if ( zpoller_expired (poller) || zpoller_terminated (poller) ) {
-//                log_error ("zpoller_wait(timeout = 5000) timed out waiting for message.");
-//                zpoller_destroy (&poller);
-//                mlm_client_destroy (&client);
-//                std::string err =  TRANSLATE_ME ("Timed out waiting for message.");
-//                http_die ("internal-error", err.c_str ());
-//            }
-//        }
-//        zpoller_destroy (&poller);
-//
-//        // filter dataDc
-//        char *uuid_new = zmsg_popstr (mreply);
-//        char *status = zmsg_popstr (mreply);
-//        if ( !streq (status, "OK") ) {
-//            // clean it up
-//            zstr_free (&status);
-//            zstr_free (&uuid_new);
-//            zmsg_destroy (&mreply);
-//            mlm_client_destroy (&client);
-//            std::string err =  TRANSLATE_ME ("See log for more detail");
-//            http_die ("internal-error", err.c_str ());
-//        }
-//        zstr_free (&status);
-//        zstr_free (&uuid_new);
-//        // here we are, if we got "OK" response
-//        // go through all messages and select quantities we are interested in
-//        char *element = zmsg_popstr (mreply);
-//        zstr_free (&element);
-//        dataDc.emplace (aDc, std::map<std::string,std::string>());
-//        while  ( zmsg_size (mreply) > 0 ) {
-//            zmsg_t *encoded_metric = zmsg_popmsg (mreply);
-//            fty_proto_t *metric = fty_proto_decode (&encoded_metric);
-//            if ( !metric || fty_proto_id (metric) != FTY_PROTO_METRIC ) {
-//                log_error ("Cannot decode some part of the reply, skip it");
-//                zmsg_destroy (&mreply);
-//                continue;
-//            }
-//            if ( interesting_sources.count ( fty_proto_type (metric)) != 0 ) {
-//                dataDc.at(aDc).emplace (fty_proto_type (metric), fty_proto_value (metric) );
-//            }
-//            fty_proto_destroy (&metric);
-//        }
-
         for( size_t P = 0; P < requestedParams.size(); P++ ) {
             const std::string& key = requestedParams[P];
             // key:value
@@ -442,7 +330,6 @@ bool database_ready;
             }
         }
     }
-//            mlm_client_destroy (&client);
 
     // So we finally have all values in "dataDc"
     // lets just  print them
@@ -479,8 +366,7 @@ bool database_ready;
         json += ( D < DCs.size() -1) ? "," : "";
     }
     json += "]}"; // close the main object
-</%cpp>
-<$$ json $>
-<%cpp>
+
+    reply.out() << json;
 }
 </%cpp>

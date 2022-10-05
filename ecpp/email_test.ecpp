@@ -103,13 +103,13 @@ UserInfo user;
     ZuuidGuard uuid (zuuid_new ());
     zmsg_t *send = s_smtp_GET_message (checked_email.c_str (), uuid);
     int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 1000, &send);
+    zmsg_destroy (&send);
     if (rv == -1)
     {
         log_fatal (
                     "Error: client->sendto (address = '%s', subject = '%s', timeout = 1000) failed.",
                         AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL");
         std::string err =  TRANSLATE_ME ("client->sendto () failed");
-        zmsg_destroy (&send);
         log_error_audit ("Request CREATE email_test FAILED");
         http_die ("internal-error", err.c_str ());
     }

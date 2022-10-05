@@ -71,7 +71,7 @@ s_smtp_GET_message (
     utils::email::x_headers (headers);
 
     zframe_t *frame = zhash_pack (headers);
-    zmsg_add (msg, frame);
+    zmsg_add (msg, frame); // frame owned by msg
     zhash_destroy (&headers);
 
     if (attach_system_state) {
@@ -169,6 +169,7 @@ UserInfo user;
             attach_system_state,
             uuid);
     int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 1000, &send);
+    zmsg_destroy (&send);
 
     if (rv == -1)
     {
@@ -176,7 +177,6 @@ UserInfo user;
                     "Error: client->sendto (address = '%s', subject = '%s', timeout = 1000) failed.",
                         AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL");
         std::string err =  TRANSLATE_ME ("client->sendto () failed");
-        zmsg_destroy (&send);
         log_error_audit ("Request CREATE email_test FAILED");
         http_die ("internal-error", err.c_str ());
     }

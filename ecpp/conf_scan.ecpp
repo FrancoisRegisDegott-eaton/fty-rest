@@ -30,15 +30,14 @@
 #include <cxxtools/jsondeserializer.h>
 #include <fty_common_rest_audit_log.h>
 
-static zmsg_t *
-req_setconf (zuuid_t *uuid, std::string json)
+static zmsg_t* req_setconf (zuuid_t *uuid, std::string json)
 {
     zmsg_t *msg = zmsg_new ();
     zmsg_addstr (msg, "SETCONFIG");
     zmsg_addstr (msg, zuuid_str_canonical (uuid));
-    //parsing json file
-    try {
 
+    //parsing json
+    try {
         std::stringstream input (json);
         cxxtools::JsonDeserializer deserializer (input);
         cxxtools::SerializationInfo request_doc;
@@ -119,15 +118,15 @@ req_setconf (zuuid_t *uuid, std::string json)
 
     }
     catch (const std::exception& e) {
+        log_error("exception caught: %s", e.what());
+        zmsg_destroy (&msg);
         return NULL;
     }
 
     return msg;
 }
 
-
-int
-set_confscan (std::string json)
+static int set_confscan (std::string json)
 {
      // connect to mlm client
     auto client = mlm_pool.get();
@@ -137,13 +136,15 @@ set_confscan (std::string json)
     }
 
     zuuid_t *uuid = zuuid_new ();
-    zmsg_t *request = req_setconf (uuid, json);
-    if (request == NULL) {
+    zmsg_t *msg = req_setconf (uuid, json);
+    if (msg == NULL) {
         zuuid_destroy (&uuid);
         return -8;
     }
 
-    int rv = client->sendto ("fty-discovery", "setconf", 1000, &request);
+    // seems to be obsolete (fty-discovery was replaced)
+    int rv = client->sendto ("fty-discovery", "setconf", 1000, &msg);
+    zmsg_destroy(&msg);
 
     if (rv == -1) {
         zuuid_destroy (&uuid);
@@ -157,39 +158,33 @@ set_confscan (std::string json)
         log_fatal ("set_confscan: client->recv (timeout = '5') returned NULL");
         return -3;
     }
+
     char *result = zmsg_popstr (resp);
+
+    int ret = -5; // unexpected resp
     if (result) {
         if (streq (result, "OK")) {
-                zstr_free (&result);
-                return 0;
-            }
+            ret = 0;
+        }
         else if (streq (result, "ERROR")) {
-            zstr_free (&result);
-            return -8;
+            ret = -8;
         }
         else if (streq (result, "STOPPING")) {
-            zstr_free (&result);
-            return -6;
+            ret = -6;
         }
         else if (streq (result, "RUNNING")) {
-            zstr_free (&result);
-            return -7;
-        }
-        else {
-            zstr_free (&result);
-            return -5;
+            ret = -7;
         }
     }
-    else
-        return -5;
+
     zstr_free (&result);
     zmsg_destroy (&resp);
-    return 0;
+
+    return ret;
 }
 
 // confscan request
-static zmsg_t *
-req_getconfscan (zuuid_t *uuid)
+static zmsg_t* req_getconfscan (zuuid_t *uuid)
 {
     zmsg_t *msg = zmsg_new ();
     zmsg_addstr (msg, "GETCONFIG");
@@ -197,8 +192,7 @@ req_getconfscan (zuuid_t *uuid)
     return msg;
 }
 
-int
-get_confscan (std::string &output)
+static int get_confscan (std::string &output)
 {
     output.clear ();
 
@@ -211,8 +205,9 @@ get_confscan (std::string &output)
     }
 
     zuuid_t *uuid = zuuid_new ();
-    zmsg_t *request = req_getconfscan (uuid);
-    int rv = client->sendto ("fty-discovery", "getconf", 1000, &request);
+    zmsg_t *req = req_getconfscan (uuid);
+    int rv = client->sendto ("fty-discovery", "getconf", 1000, &req);
+    zmsg_destroy (&req);
 
     if (rv == -1)
     {
@@ -230,28 +225,26 @@ get_confscan (std::string &output)
     }
 
     char *result = zmsg_popstr (resp);
+
+    int ret = -5; // unexpected resp
     if (result) {
         if (streq (result, "OK")) {
-            zstr_free (&result);
             char *json_res = zmsg_popstr (resp);
-            if (!json_res) return -5;
-            output.append (json_res);
+            if (json_res) {
+                output.append (json_res);
+                ret = 0;
+            }
             zstr_free (&json_res);
         }
         else if (streq (result, "ERROR")) {
-            zstr_free (&result);
-            return -4;
-        }
-        else {
-            zstr_free (&result);
-            return -5;
+            ret = -4;
         }
     }
-    else
-        return -5;
 
+    zstr_free (&result);
     zmsg_destroy (&resp);
-    return 0;
+
+    return ret;
 }
 
 </%pre>

@@ -65,7 +65,7 @@ s_smtp_GET_message (
     utils::email::x_headers (headers);
 
     zframe_t *frame = zhash_pack (headers);
-    zmsg_add (msg, frame);
+    zmsg_add (msg, frame); // frame owned by msg
     zhash_destroy (&headers);
 
     if (attach_system_state) {
@@ -80,11 +80,8 @@ s_rm_rf (const std::vector <std::string>& paths, char **dir_p)
     for (const auto& path : paths)
         unlink (path.c_str ());
 
-    if (*dir_p) {
-        char *dir = *dir_p;
-        rmdir (dir);
-        zstr_free (&dir);
-        *dir_p = NULL;
+    if (dir_p && *dir_p) {
+        zstr_free(dir_p);
     }
 }
 
@@ -271,9 +268,11 @@ UserInfo user;
             attach_system_state,
             participate,
             uuid);
-    for (const std::string& path: paths)
+    for (const std::string& path: paths) {
         zmsg_addstr (send, path.c_str ());
+    }
     int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 1000, &send);
+    zmsg_destroy(&send);
 
     if (rv == -1)
     {
@@ -282,7 +281,6 @@ UserInfo user;
                         AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL");
         s_rm_rf (paths, &temp_dir);
         std::string err =  TRANSLATE_ME ("client->sendto () failed");
-        zmsg_destroy (&send);
         log_error_audit ("Request CREATE email_feedback FAILED");
         http_die ("internal-error", err.c_str ());
     }

@@ -136,10 +136,11 @@ const char *dest = "fty-alert-engine";
 if (reg.match (request.getBody ())) dest = "fty-alert-flexible";
 
 // send it
-if (mlm_client_sendto (client, dest, "rfc-evaluator-rules", NULL, 1000, &send_msg) != 0) {
+rv = mlm_client_sendto (client, dest, "rfc-evaluator-rules", NULL, 1000, &send_msg);
+zmsg_destroy (&send_msg);
+if (rv != 0) {
     log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
         dest, "rfc-evaluator-rules", 1000);
-    zmsg_destroy (&send_msg);
     std::string err =  TRANSLATE_ME ("mlm_client_sendto () failed.");
     log_error_audit ("Request %s alert rule named %s FAILED", request.getMethod () == "POST" ? "CREATE" : "CREATE OR UPDATE", name.c_str ());
     http_die ("internal-error", err.c_str ());

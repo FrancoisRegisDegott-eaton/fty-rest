@@ -45,11 +45,11 @@ static int get_scan_progress (std::string& output)
 
     // send request
     zuuid_t *uuid = zuuid_new ();
-    zmsg_t *request = zmsg_new ();
-    zmsg_addstr (request, "PROGRESS");
-    zmsg_addstr (request, zuuid_str_canonical (uuid));
-    int rv = client->sendto ("fty-discovery", "progress", 1000, &request);
-    zmsg_destroy (&request);
+    zmsg_t *msg = zmsg_new ();
+    zmsg_addstr (msg, "PROGRESS");
+    zmsg_addstr (msg, zuuid_str_canonical (uuid));
+    int rv = client->sendto ("fty-discovery", "progress", 1000, &msg);
+    zmsg_destroy (&msg);
 
     if (rv == -1) {
         zuuid_destroy (&uuid);
@@ -135,6 +135,7 @@ UserInfo user;
 
     std::string output;
     int rv = get_scan_progress (output);
+
     if (rv != 0) {
         log_error("get_scan_progress() failed (rv: %d)", rv);
         std::string err = TRANSLATE_ME("Automatic discovery service not available");

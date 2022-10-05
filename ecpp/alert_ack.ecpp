@@ -166,11 +166,13 @@ if (!send_msg) {
 std::string asset_id;
 rv = DBAssets::extname_to_asset_name (checked_element_name, asset_id);
 if (rv == -1) {
+    zmsg_destroy(&send_msg);
     std::string msg_not_found = TRANSLATE_ME ("Cannot get asset ID for %s", checked_element_name.c_str ());
     log_error_audit ("Request CREATE OR UPDATE alert ack for rule %s and asset %s FAILED", rule_name.c_str (), element_name.c_str ());
     http_die ("not-found", msg_not_found.c_str ());
 }
 if (rv == -2) {
+    zmsg_destroy(&send_msg);
     std::string err =  TRANSLATE_ME ("Database failure");
     log_error_audit ("Request CREATE OR UPDATE alert ack for rule %s and asset %s FAILED", rule_name.c_str (), element_name.c_str ());
     http_die ("internal-error", err.c_str ());
@@ -180,10 +182,11 @@ zmsg_addstr (send_msg, asset_id.c_str ());
 zmsg_addstr (send_msg, checked_state.c_str ());
 
 // send it
-if (mlm_client_sendto (client, AGENT_FTY_ALERT_LIST, "rfc-alerts-acknowledge", NULL, 1000, &send_msg) != 0) {
+rv = mlm_client_sendto (client, AGENT_FTY_ALERT_LIST, "rfc-alerts-acknowledge", NULL, 1000, &send_msg);
+zmsg_destroy (&send_msg);
+if (rv != 0) {
     log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
         AGENT_FTY_ALERT_LIST, "rfc-alerts-acknowledge", 1000);
-    zmsg_destroy (&send_msg);
     std::string err =  TRANSLATE_ME ("mlm_client_sendto () failed.");
     log_error_audit ("Request CREATE OR UPDATE alert ack for rule %s and asset %s FAILED", rule_name.c_str (), element_name.c_str ());
     http_die ("internal-error", err.c_str ());

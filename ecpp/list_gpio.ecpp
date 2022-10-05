@@ -28,19 +28,19 @@
 #include <fty_common_mlm_pool.h>
 #include <fty_common_rest_helpers.h>
 
-
 // list request
-static zmsg_t *
-req_list (zuuid_t *uuid)
+static zmsg_t* req_list (zuuid_t *uuid)
 {
     zmsg_t *msg = zmsg_new ();
     zmsg_addstr (msg, zuuid_str_canonical (uuid));
     return msg;
 }
 
+// returns 0 if success, else <0
 static int s_handle_response (zmsg_t *msg, std::string &json)
 {
     json.assign ("[");
+
     char *part_number = zmsg_popstr (msg);
     while (part_number) {
         json.append ("{");
@@ -101,14 +101,16 @@ static int s_handle_response (zmsg_t *msg, std::string &json)
         json.append ("},");
         part_number = zmsg_popstr (msg);
     }
-    //remove trailing comma
+
+    // remove trailing comma
     json.pop_back ();
     json.append ("]");
+
     return 0;
 }
 
-int
-get_list (std::string &output)
+// returns 0 if success, else <0
+static int get_list (std::string &output)
 {
     output.clear();
 
@@ -121,8 +123,9 @@ get_list (std::string &output)
     }
 
     zuuid_t *uuid = zuuid_new ();
-    zmsg_t *request = req_list (uuid);
-    int rv = client->sendto ("fty-sensor-gpio", "GPIO_MANIFEST", 1000, &request);
+    zmsg_t *msg = req_list (uuid);
+    int rv = client->sendto ("fty-sensor-gpio", "GPIO_MANIFEST", 1000, &msg);
+    zmsg_destroy(&msg);
 
     if (rv == -1)
     {
@@ -138,24 +141,18 @@ get_list (std::string &output)
         log_fatal ("info: client->recv (timeout = '5') returned NULL");
         return -3;
     }
+
+    int ret = -5; // unexpected resp
+
     char *result = zmsg_popstr (resp);
-    if (result) {
-        if (streq (result, "OK")) {
-            int rv1 = s_handle_response (resp, output);
-            zstr_free (&result);
-            zmsg_destroy(&resp);
-            return rv1;
-        }
-        else {
-            zstr_free (&result);
-            zmsg_destroy(&resp);
-            return -5;
-        }
+    if (result && streq (result, "OK")) {
+        ret = s_handle_response (resp, output);
     }
-    else {
-        zmsg_destroy(&resp);
-        return -5;
-    }
+
+    zstr_free (&result);
+    zmsg_destroy(&resp);
+
+    return ret;
 }
 </%pre>
 <%request scope="global">
@@ -172,25 +169,24 @@ UserInfo user;
 
     std::string output;
     int rv = get_list (output);
-    if (rv == -1) {
-        std::string err =  TRANSLATE_ME ("mlmpool.get () failed.");
+
+    if (rv != 0) { // failed
+        if (rv == -1) {
+            std::string err = TRANSLATE_ME ("mlmpool.get () failed.");
+            http_die ("internal-error", err.c_str ());
+        }
+        if (rv == -2) {
+            std::string err = TRANSLATE_ME ("client->sendto () failed.");
+            http_die ("internal-error", err.c_str ());
+        }
+        if (rv == -3) {
+            std::string err = TRANSLATE_ME ("client->recv () failed.");
+            http_die ("internal-error", err.c_str ());
+        }
+
+        std::string err = TRANSLATE_ME ("fty-sensor-gpio returned malformed or unexpected message.");
         http_die ("internal-error", err.c_str ());
     }
-    else
-    if (rv == -2) {
-        std::string err =  TRANSLATE_ME ("client->sendto () failed.");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -3) {
-        std::string err =  TRANSLATE_ME ("client->recv () failed.");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -5) {
-        std::string err =  TRANSLATE_ME ("fty-sensor-gpio returned malformed or unexpected message.");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
+
+    reply.out () << output;
 </%cpp>
-<$$ output $>
