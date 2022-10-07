@@ -49,8 +49,8 @@
   <!-- <group>tntnet</group> -->
   <dir>@CMAKE_INSTALL_FULL_DATAROOTDIR@/@PROJECT_NAME@/web</dir>
   <compPath>
-     <entry>@CMAKE_INSTALL_PREFIX@/lib/bios</entry>
      <entry>@CMAKE_INSTALL_FULL_LIBDIR@</entry>
+     <entry>@CMAKE_INSTALL_PREFIX@/lib/bios</entry>
      <entry>@CMAKE_INSTALL_FULL_LIBDIR@/@PROJECT_NAME@</entry>
      <entry>@CMAKE_INSTALL_FULL_LIBEXECDIR@/bios</entry>
   </compPath>
