@@ -61,7 +61,7 @@ static int stop_scan ()
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *msg = req_stop (uuid);
-    int rv = client->sendto ("fty-discovery", "stopscan", 1000, &msg);
+    int rv = client->sendto ("fty-discovery", "stopscan", 5, &msg);
     zmsg_destroy(&msg);
 
     if (rv == -1)
@@ -104,7 +104,7 @@ static int run_scan ()
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *msg = req_scan (uuid);
-    int rv = client->sendto ("fty-discovery", "LAUNCHSCAN", 1000, &msg);
+    int rv = client->sendto ("fty-discovery", "LAUNCHSCAN", 5, &msg);
     zmsg_destroy(&msg);
 
     if (rv == -1) {

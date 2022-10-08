@@ -143,7 +143,7 @@ static int set_confscan (std::string json)
     }
 
     // seems to be obsolete (fty-discovery was replaced)
-    int rv = client->sendto ("fty-discovery", "setconf", 1000, &msg);
+    int rv = client->sendto ("fty-discovery", "setconf", 5, &msg);
     zmsg_destroy(&msg);
 
     if (rv == -1) {
@@ -206,7 +206,7 @@ static int get_confscan (std::string &output)
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *req = req_getconfscan (uuid);
-    int rv = client->sendto ("fty-discovery", "getconf", 1000, &req);
+    int rv = client->sendto ("fty-discovery", "getconf", 5, &req);
     zmsg_destroy (&req);
 
     if (rv == -1)

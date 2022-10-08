@@ -56,7 +56,7 @@ gpo_action (std::string sensor, std::string action)
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *msg = req_gpo_interaction (uuid, sensor, action);
-    int rv = client->sendto ("fty-sensor-gpio", "GPO_INTERACTION", 1000, &msg);
+    int rv = client->sendto ("fty-sensor-gpio", "GPO_INTERACTION", 5, &msg);
     zmsg_destroy(&msg);
 
     if (rv == -1)

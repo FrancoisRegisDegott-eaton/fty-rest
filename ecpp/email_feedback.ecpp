@@ -125,7 +125,7 @@ UserInfo user;
     std::string checked_context;
     bool attach_system_state = false;
     bool participate = false;
-    unsigned _timeout = 60;
+    unsigned _timeout = 60; //sec
     {
 
         std::string to = qparam.param ("to");
@@ -184,11 +184,11 @@ UserInfo user;
         if (sys_participate == "yes")
             participate = true;
 
-
-        std::string _stimeout = qparam.param ("_timeout");
-
         try {
-            _timeout = uint32_t(std::stoi(_stimeout));
+            std::string aux = qparam.param ("_timeout");
+            if (!aux.empty()) {
+                _timeout = uint32_t(std::stoi(aux)); // sec
+            }
         }
         catch (const std::exception& e) {
             //pass
@@ -271,14 +271,14 @@ UserInfo user;
     for (const std::string& path: paths) {
         zmsg_addstr (send, path.c_str ());
     }
-    int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 1000, &send);
+    int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 10, &send);
     zmsg_destroy(&send);
 
     if (rv == -1)
     {
         log_fatal (
-                    "Error: client->sendto (address = '%s', subject = '%s', timeout = 1000) failed.",
-                        AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL");
+                    "Error: client->sendto (address = '%s', subject = '%s', timeout = %ds) failed.",
+                        AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 10);
         s_rm_rf (paths, &temp_dir);
         std::string err =  TRANSLATE_ME ("client->sendto () failed");
         log_error_audit ("Request CREATE email_feedback FAILED");

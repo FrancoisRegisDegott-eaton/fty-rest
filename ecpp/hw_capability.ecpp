@@ -64,7 +64,7 @@ static int get_hw_capability (const char *type, std::string &res, std::string& e
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *send = req_hw_cap (uuid, type);
-    int rv = client->sendto ("fty-info", "hwcapabaility", 1000, &send);
+    int rv = client->sendto ("fty-info", "hwcapabaility", 5, &send);
     zmsg_destroy (&send);
     if (rv < 0)
     {

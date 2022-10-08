@@ -124,7 +124,7 @@ static int get_list (std::string &output)
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *msg = req_list (uuid);
-    int rv = client->sendto ("fty-sensor-gpio", "GPIO_MANIFEST", 1000, &msg);
+    int rv = client->sendto ("fty-sensor-gpio", "GPIO_MANIFEST", 5, &msg);
     zmsg_destroy(&msg);
 
     if (rv == -1)

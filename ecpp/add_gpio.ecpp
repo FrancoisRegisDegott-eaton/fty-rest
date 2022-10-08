@@ -107,7 +107,7 @@ static int add_gpio (const std::string& json)
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *msg = req_add (uuid, &params);
-    int rv = client->sendto ("fty-sensor-gpio", "GPIO_TEMPLATE_ADD", 1000, &msg);
+    int rv = client->sendto ("fty-sensor-gpio", "GPIO_TEMPLATE_ADD", 5, &msg);
     zmsg_destroy (&msg);
 
     if (rv == -1)

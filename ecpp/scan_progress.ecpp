@@ -48,7 +48,7 @@ static int get_scan_progress (std::string& output)
     zmsg_t *msg = zmsg_new ();
     zmsg_addstr (msg, "PROGRESS");
     zmsg_addstr (msg, zuuid_str_canonical (uuid));
-    int rv = client->sendto ("fty-discovery", "progress", 1000, &msg);
+    int rv = client->sendto ("fty-discovery", "progress", 20, &msg);
     zmsg_destroy (&msg);
 
     if (rv == -1) {

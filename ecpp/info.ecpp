@@ -53,7 +53,7 @@ static int get_rc_info (std::string &output)
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *send = req_info (uuid);
-    int rv = client->sendto ("fty-info", "info", 1000, &send);
+    int rv = client->sendto ("fty-info", "info", 5, &send);
     zmsg_destroy(&send);
 
     if (rv == -1)
