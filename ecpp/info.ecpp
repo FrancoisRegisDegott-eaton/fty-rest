@@ -29,8 +29,7 @@
 #include <fty_common_macros.h>
 
 // info request
-static zmsg_t *
-req_info (zuuid_t *uuid)
+static zmsg_t* req_info (zuuid_t *uuid)
 {
     zmsg_t *msg = zmsg_new ();
     zmsg_addstr (msg, "INFO");
@@ -39,8 +38,8 @@ req_info (zuuid_t *uuid)
 }
 
 // fty-info data
-int
-get_rc_info (std::string &output)
+// returns 0 if success, lese <0 (see code)
+static int get_rc_info (std::string &output)
 {
     output.clear();
 
@@ -54,7 +53,8 @@ get_rc_info (std::string &output)
 
     zuuid_t *uuid = zuuid_new ();
     zmsg_t *send = req_info (uuid);
-    int rv = client->sendto ("fty-info", "info", 1000, &send);
+    int rv = client->sendto ("fty-info", "info", 5, &send);
+    zmsg_destroy(&send);
 
     if (rv == -1)
     {
@@ -70,6 +70,7 @@ get_rc_info (std::string &output)
         log_fatal ("info: client->recv (timeout = '5') returned NULL");
         return -3;
     }
+
     char *command = zmsg_popstr (resp);
     char *srv_name  = zmsg_popstr (resp);
     char *srv_type  = zmsg_popstr (resp);
@@ -86,24 +87,29 @@ get_rc_info (std::string &output)
     output += utils::json::jsonify("port", srv_port);
     output += "\n},";
     output += "\"attributes\": {\n";
+
     char *value = static_cast<char*>(zhash_first(infos));   // first value
-    while ( value != NULL )
+    while (value)
     {
         char *key = const_cast<char*>(zhash_cursor(infos));   // key of this value
         output += utils::json::jsonify(key, value);
 
         value = static_cast<char*>(zhash_next(infos));   // next value
-        if (value != NULL) output += ",\n";
+        if (value) output += ",\n";
     }
+
     output += "\n}";
     output += "\n}";
+
     zstr_free (&command);
     zstr_free(&srv_name);
     zstr_free(&srv_type);
     zstr_free(&srv_stype);
     zstr_free(&srv_port);
     zhash_destroy(&infos);
+
     zmsg_destroy(&resp);
+
     return 0;
 }
 </%pre>
@@ -121,20 +127,20 @@ UserInfo user;
 
     std::string output;
     int rv = get_rc_info (output);
-    if (rv == -1) {
-        std::string err =  TRANSLATE_ME ("mlmpool.get () failed.");
+
+    if (rv != 0) { // failed
+        if (rv == -1) {
+            std::string err = TRANSLATE_ME ("mlmpool.get () failed.");
+            http_die ("internal-error", err.c_str ());
+        }
+        if (rv == -2) {
+            std::string err = TRANSLATE_ME ("client->sendto () failed.");
+            http_die ("internal-error", err.c_str ());
+        }
+
+        std::string err = TRANSLATE_ME ("client->recv () failed.");
         http_die ("internal-error", err.c_str ());
     }
-    else
-    if (rv == -2) {
-        std::string err =  TRANSLATE_ME ("client->sendto () failed.");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -3) {
-        std::string err =  TRANSLATE_ME ("client->recv () failed.");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
+
+    reply.out () << output;
 </%cpp>
-<$$ output $>

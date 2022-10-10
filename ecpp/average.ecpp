@@ -282,7 +282,7 @@ bool database_ready;
             zmsg_addstr (sent_msg, std::to_string (end).c_str ());
             zmsg_addstr (sent_msg, "1"); // ordered
 
-            int rv = client->sendto ("fty-metric-store", "aggregated data", 1000, &sent_msg);
+            int rv = client->sendto ("fty-metric-store", "aggregated data", 5, &sent_msg);
             zmsg_destroy(&sent_msg);
             if (rv == -1) {
                 zuuid_destroy (&uuid);
@@ -438,7 +438,7 @@ bool database_ready;
         zmsg_addstr (sent_msg, std::to_string (end).c_str ());
         zmsg_addstr (sent_msg, (checked_ordered ? "1" : "0") );
 
-        int rv = client->sendto ("fty-metric-store", "aggregated data", 1000, &sent_msg);
+        int rv = client->sendto ("fty-metric-store", "aggregated data", 5, &sent_msg);
         zmsg_destroy(&sent_msg);
         if (rv == -1) {
             zuuid_destroy (&uuid);

@@ -35,14 +35,11 @@
 #include <cxxtools/jsondeserializer.h>
 
 // encode metric GET request
-static zmsg_t*
-s_request_LIST ( zuuid_t *uuid, const char* type)
+static zmsg_t* s_request_LIST ( zuuid_t *uuid, const char* type)
 {
-    assert (uuid);
-    static const char* method = "LIST";
     zmsg_t *msg = zmsg_new ();
-    zmsg_addstr (msg, method);
-    zmsg_addstr (msg, zuuid_str_canonical (uuid));
+    zmsg_addstr (msg, "LIST");
+    zmsg_addstr (msg, uuid ? zuuid_str_canonical (uuid) : "<uuid-null>");
     zmsg_addstr (msg, type);
     return msg;
 }
@@ -74,20 +71,21 @@ if (!client) {
 }
 
 ZuuidGuard uuid (zuuid_new ());
-zmsg_t *req_list = s_request_LIST (uuid,type.c_str());
+zmsg_t *req = s_request_LIST (uuid, type.c_str());
+int rv = client->sendto ("fty-autoconfig", "rfc-evaluator-rules", 5, &req);
+zmsg_destroy(&req);
 
-int rv = client->sendto ("fty-autoconfig", "rfc-evaluator-rules", 1000, &req_list);
 if (rv == -1) {
     log_fatal (
-            "client->sendto (address = '%s', subject = '%s', timeout = 1000) failed.",
+            "client->sendto (address = '%s', subject = '%s', timeout = 5) failed.",
             "fty-autoconfig", "rfc-evaluator-rules");
     std::string err =  TRANSLATE_ME ("client->sendto () failed");
     http_die ("internal-error", err.c_str ());
 }
 
-ZmsgGuard msg(client->recv (zuuid_str_canonical (uuid), 5));
+ZmsgGuard msg(client->recv (zuuid_str_canonical (uuid), 10));
 if (!msg) {
-    log_fatal ("client->recv (timeout = '5') returned NULL");
+    log_fatal ("client->recv (timeout = '10') returned NULL");
     std::string err =  TRANSLATE_ME ("client->recv () returned NULL");
     http_die ("internal-error", err.c_str ());
 }

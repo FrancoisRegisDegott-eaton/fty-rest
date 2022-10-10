@@ -65,7 +65,7 @@ s_smtp_GET_message (
     utils::email::x_headers (headers);
 
     zframe_t *frame = zhash_pack (headers);
-    zmsg_add (msg, frame);
+    zmsg_add (msg, frame); // frame owned by msg
     zhash_destroy (&headers);
 
     if (attach_system_state) {
@@ -80,11 +80,8 @@ s_rm_rf (const std::vector <std::string>& paths, char **dir_p)
     for (const auto& path : paths)
         unlink (path.c_str ());
 
-    if (*dir_p) {
-        char *dir = *dir_p;
-        rmdir (dir);
-        zstr_free (&dir);
-        *dir_p = NULL;
+    if (dir_p && *dir_p) {
+        zstr_free(dir_p);
     }
 }
 
@@ -128,7 +125,7 @@ UserInfo user;
     std::string checked_context;
     bool attach_system_state = false;
     bool participate = false;
-    unsigned _timeout = 60;
+    unsigned _timeout = 60; //sec
     {
 
         std::string to = qparam.param ("to");
@@ -187,11 +184,11 @@ UserInfo user;
         if (sys_participate == "yes")
             participate = true;
 
-
-        std::string _stimeout = qparam.param ("_timeout");
-
         try {
-            _timeout = uint32_t(std::stoi(_stimeout));
+            std::string aux = qparam.param ("_timeout");
+            if (!aux.empty()) {
+                _timeout = uint32_t(std::stoi(aux)); // sec
+            }
         }
         catch (const std::exception& e) {
             //pass
@@ -271,18 +268,19 @@ UserInfo user;
             attach_system_state,
             participate,
             uuid);
-    for (const std::string& path: paths)
+    for (const std::string& path: paths) {
         zmsg_addstr (send, path.c_str ());
-    int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 1000, &send);
+    }
+    int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 10, &send);
+    zmsg_destroy(&send);
 
     if (rv == -1)
     {
         log_fatal (
-                    "Error: client->sendto (address = '%s', subject = '%s', timeout = 1000) failed.",
-                        AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL");
+                    "Error: client->sendto (address = '%s', subject = '%s', timeout = %ds) failed.",
+                        AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 10);
         s_rm_rf (paths, &temp_dir);
         std::string err =  TRANSLATE_ME ("client->sendto () failed");
-        zmsg_destroy (&send);
         log_error_audit ("Request CREATE email_feedback FAILED");
         http_die ("internal-error", err.c_str ());
     }

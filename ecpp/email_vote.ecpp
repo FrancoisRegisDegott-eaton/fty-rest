@@ -37,8 +37,7 @@
 #include <fty_common_rest_audit_log.h>
 
 // encode GET message for smtp agent
-static zmsg_t*
-s_smtp_GET_message (
+static zmsg_t* s_smtp_GET_message (
         const char* to,
         int vote,
         const char* context,
@@ -50,7 +49,7 @@ s_smtp_GET_message (
 
     zmsg_addstr (msg, to);
     char *subject = zsys_sprintf ("IPC vote context=%s", context);
-    zmsg_addstr (msg, subject);
+    zmsg_addstr (msg, subject ? subject : "IPC vote");
     zstr_free (&subject);
 
     std::string message = "Hi,\nthis product is ";
@@ -71,7 +70,7 @@ s_smtp_GET_message (
     utils::email::x_headers (headers);
 
     zframe_t *frame = zhash_pack (headers);
-    zmsg_add (msg, frame);
+    zmsg_add (msg, frame); // frame owned by msg
     zhash_destroy (&headers);
 
     if (attach_system_state) {
@@ -90,14 +89,15 @@ UserInfo user;
             {BiosProfile::Admin,         "C"},
             {BiosProfile::Dashboard,     "C"}
             };
-    std::string audit_msg = std::string ("Request CREATE email_test FAILED");
-    CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.empty () ? nullptr : audit_msg.c_str ());
+
+    std::string audit_msg = "Request CREATE email_vote FAILED";
+    CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.c_str ());
 
     std::string checked_to;
     unsigned vote = 0;
     std::string checked_context;
     bool attach_system_state = false;
-    unsigned _timeout = 60;
+    unsigned _timeout = 60; //sec
     {
         std::string to = qparam.param ("to");
         if (to.empty ()) {
@@ -111,12 +111,12 @@ UserInfo user;
 
         if (to.find ('@', 0) == std::string::npos) {
             std::string expected = TRANSLATE_ME ("valid email address");
-            log_error_audit ("Request CREATE email_test FAILED");
+            log_error_audit ("Request CREATE email_vote FAILED");
             http_die ("request-param-bad", "to", to.c_str (), expected.c_str ());
         }
         std::string value = qparam.param ("value");
         if (value.empty ()) {
-            log_error_audit ("Request CREATE email_test FAILED");
+            log_error_audit ("Request CREATE email_vote FAILED");
             http_die ("request-param-required", "value");
         }
 
@@ -125,13 +125,13 @@ UserInfo user;
         }
         catch (const std::exception& e) {
             std::string expected = TRANSLATE_ME ("number 1-3");
-            log_error_audit ("Request CREATE email_test FAILED");
+            log_error_audit ("Request CREATE email_vote FAILED");
             http_die ("request-param-bad", "value", value.c_str (), expected.c_str ());
         }
 
         std::string context = qparam.param ("context");
         if (context.empty ()) {
-            log_error_audit ("Request CREATE email_test FAILED");
+            log_error_audit ("Request CREATE email_vote FAILED");
             http_die ("request-param-required", "context");
         }
 
@@ -141,10 +141,11 @@ UserInfo user;
         if (sys_state == "yes")
             attach_system_state = true;
 
-        std::string _stimeout = qparam.param ("_timeout");
-
         try {
-            _timeout = unsigned(std::stoi(_stimeout));
+            std::string aux = qparam.param ("_timeout");
+            if (!aux.empty()) {
+                _timeout = unsigned(std::stoi(aux)); // sec
+            }
         }
         catch (const std::exception& e) {
             //pass
@@ -156,7 +157,7 @@ UserInfo user;
     if (!client) {
         log_fatal ("Error: mlm_pool.get () failed.");
         std::string err =  TRANSLATE_ME ("mlm_pool.get () failed.");
-        log_error_audit ("Request CREATE email_test FAILED");
+        log_error_audit ("Request CREATE email_vote FAILED");
         http_die ("internal-error", err.c_str ());
     }
 
@@ -168,16 +169,16 @@ UserInfo user;
             checked_context.c_str (),
             attach_system_state,
             uuid);
-    int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 1000, &send);
+    int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 10, &send);
+    zmsg_destroy (&send);
 
     if (rv == -1)
     {
         log_fatal (
-                    "Error: client->sendto (address = '%s', subject = '%s', timeout = 1000) failed.",
-                        AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL");
+                    "Error: client->sendto (address = '%s', subject = '%s', timeout = %ds) failed.",
+                        AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 10);
         std::string err =  TRANSLATE_ME ("client->sendto () failed");
-        zmsg_destroy (&send);
-        log_error_audit ("Request CREATE email_test FAILED");
+        log_error_audit ("Request CREATE email_vote FAILED");
         http_die ("internal-error", err.c_str ());
     }
 
@@ -186,7 +187,7 @@ UserInfo user;
     {
         std::string msg = TRANSLATE_ME ("Error: client-> recv (timeout = '%d') returned NULL", _timeout);
         log_error ("%s", msg.c_str ());
-        log_error_audit ("Request CREATE email_test FAILED");
+        log_error_audit ("Request CREATE email_vote FAILED");
         http_die ("internal-error", msg.c_str ());
     }
 
@@ -203,7 +204,7 @@ UserInfo user;
     if (streq (msg_subject, "SENDMAIL-ERR"))
     {
         status = "Failed";
-        log_error_audit ("Request CREATE email_test FAILED");
+        log_error_audit ("Request CREATE email_vote FAILED");
         http_die ("upstream-err", err_message.get ());
     }
     else
@@ -211,10 +212,10 @@ UserInfo user;
         status = "Failed";
         log_fatal ("Error: message recieved with invalid subject.");
         std::string err =  TRANSLATE_ME ("client->recv () invalid message subject");
-        log_error_audit ("Request CREATE email_test FAILED");
+        log_error_audit ("Request CREATE email_vote FAILED");
         http_die ("internal-error", err.c_str ());
     }
-    log_info_audit ("Request CREATE email_test SUCCESS");
+    log_info_audit ("Request CREATE email_vote SUCCESS");
 
 </%cpp>
 {

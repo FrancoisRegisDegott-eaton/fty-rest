@@ -264,10 +264,11 @@ zmsg_addstr (send_msg, "LIST");
 zmsg_addstr (send_msg, checked_state.c_str ());
 
 // send it
-if (mlm_client_sendto (client, AGENT_FTY_ALERT_LIST, RFC_ALERTS_LIST, NULL, 1000, &send_msg) != 0) {
+rv = mlm_client_sendto (client, AGENT_FTY_ALERT_LIST, RFC_ALERTS_LIST, NULL, 1000, &send_msg);
+zmsg_destroy (&send_msg);
+if (rv != 0) {
     log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%" PRIu32"') failed.",
         AGENT_FTY_ALERT_LIST, RFC_ALERTS_LIST, 1000);
-    zmsg_destroy (&send_msg);
     std::string err =  TRANSLATE_ME ("mlm_client_sendto() failed.");
     http_die ("internal-error", err.c_str ());
 }

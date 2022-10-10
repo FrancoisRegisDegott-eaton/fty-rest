@@ -23,25 +23,19 @@
  \brief  Returns a list of alert rules according specified parameters
 */
 #><%pre>
+#include <fty_common_rest_helpers.h>
+#include <fty_common_mlm_utils.h>
+#include <fty_common_mlm_guards.h>
+#include <fty_common_db_dbpath.h>
+#include <fty_common_db_asset.h>
 #include <cxxtools/jsonserializer.h>
 #include <cxxtools/serializationinfo.h>
 #include <cxxtools/jsondeserializer.h>
-#include <cxxtools/regex.h>
 #include <vector>
 #include <string>
 #include <regex>
-#include <sys/types.h>
-#include <unistd.h>
 #include <iomanip>
-#include <sstream>
 #include <malamute.h>
-#include <fty_common_db_dbpath.h>
-#include <fty_common_macros.h>
-#include <fty_common_rest.h>
-#include <fty_common_mlm_utils.h>
-#include <fty_common_mlm_guards.h>
-#include <fty_common_db_asset.h>
-
 </%pre>
 <%request scope="global">
 UserInfo user;
@@ -72,21 +66,23 @@ bool database_ready;
 
     // connect to malamute
     MlmClientGuard client(mlm_client_new ());
-    if (!client.get()) {
-        log_fatal ("mlm_client_new() failed.");
-        std::string err = TRANSLATE_ME ("mlm_client_new() failed.");
-        http_die ("internal-error", err.c_str ());
-    }
+    {
+        if (!client.get()) {
+            log_fatal ("mlm_client_new() failed.");
+            std::string err = TRANSLATE_ME ("mlm_client_new() failed.");
+            http_die ("internal-error", err.c_str ());
+        }
 
-    std::string client_name = utils::generate_mlm_client_id("web.alert_rules_list");
-    log_debug ("malamute client name = '%s'.", client_name.c_str ());
+        std::string client_name = utils::generate_mlm_client_id("web.alert_rules_list");
+        log_debug ("malamute client name = '%s'.", client_name.c_str ());
 
-    int rv = mlm_client_connect (client, MLM_ENDPOINT, 1000, client_name.c_str ());
-    if (rv == -1) {
-        log_fatal ("mlm_client_connect (endpoint = '%s', timeout = '%d', address = '%s') failed.",
-                        MLM_ENDPOINT, 1000, client_name.c_str ());
-        std::string err = TRANSLATE_ME ("mlm_client_connect() failed.");
-        http_die ("internal-error", err.c_str ());
+        int rv = mlm_client_connect (client, MLM_ENDPOINT, 1000, client_name.c_str ());
+        if (rv == -1) {
+            log_fatal ("mlm_client_connect (endpoint = '%s', timeout = '%d', address = '%s') failed.",
+                            MLM_ENDPOINT, 1000, client_name.c_str ());
+            std::string err = TRANSLATE_ME ("mlm_client_connect() failed.");
+            http_die ("internal-error", err.c_str ());
+        }
     }
 
     // built json payload as rules filter (agent inputs)
@@ -158,8 +154,8 @@ bool database_ready;
             log_debug("send (%s, '%s') to %s agent (subject: %s)",
                 COMMAND, jsonInputs.c_str (), destination.c_str(), RULES_SUBJECT);
 
-            // Send it
-            rv = mlm_client_sendto (client, destination.c_str(), RULES_SUBJECT, NULL, 1000, &msg);
+            // send it
+            int rv = mlm_client_sendto (client, destination.c_str(), RULES_SUBJECT, NULL, 1000, &msg);
             zmsg_destroy (&msg); // useless
             if (rv != 0) {
                 log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%d') failed.",
@@ -273,8 +269,7 @@ bool database_ready;
                             log_debug("Current assetLink: %s", tmpAssetLink.c_str());
 
                             //recover the data of the asset if needed
-                            if (tmpAssetLink != assetLink)
-                            {
+                            if (tmpAssetLink != assetLink) {
                                 DBAssets::name_to_extname(tmpAssetLink, externalName);
                                 assetLink = tmpAssetLink;
                             }

@@ -32,8 +32,7 @@
 #include <fty_common_rest_audit_log.h>
 
 // stop request
-static zmsg_t *
-req_stop (zuuid_t *uuid)
+static zmsg_t* req_stop (zuuid_t *uuid)
 {
     zmsg_t *msg = zmsg_new ();
     zmsg_addstr (msg, "STOPSCAN");
@@ -42,8 +41,7 @@ req_stop (zuuid_t *uuid)
 }
 
 // launchscan request
-static zmsg_t *
-req_scan (zuuid_t *uuid)
+static zmsg_t* req_scan (zuuid_t *uuid)
 {
     zmsg_t *msg = zmsg_new ();
     zmsg_addstr (msg, "LAUNCHSCAN");
@@ -51,8 +49,7 @@ req_scan (zuuid_t *uuid)
     return msg;
 }
 
-int
-stop_scan ()
+static int stop_scan ()
 {
     // connect to mlm client
     auto client = mlm_pool.get();
@@ -63,9 +60,9 @@ stop_scan ()
     }
 
     zuuid_t *uuid = zuuid_new ();
-    zmsg_t *request = req_stop (uuid);
-
-    int rv = client->sendto ("fty-discovery", "stopscan", 1000, &request);
+    zmsg_t *msg = req_stop (uuid);
+    int rv = client->sendto ("fty-discovery", "stopscan", 5, &msg);
+    zmsg_destroy(&msg);
 
     if (rv == -1)
     {
@@ -76,30 +73,27 @@ stop_scan ()
 
     ZmsgGuard resp (client->recv (zuuid_str_canonical (uuid), 5));
     zuuid_destroy (&uuid);
+
     if (!resp)
     {
         log_fatal ("stop_scan: client->recv (timeout = '20') returned NULL");
         return -3;
     }
+
+    int ret = -5; // unexpected resp
+
     ZstrGuard result (zmsg_popstr (resp));
-    if (result) {
-        if (streq (result, "OK")) {
-                return 0;
-            }
-        else if (streq (result, "ERROR")) {
-            return -4;
-        }
-        else {
-            return -5;
-        }
+    if (result && streq (result, "OK")) {
+        ret = 0; // ok
     }
-    else
-        return -5;
-    return 0;
+    else if (result && streq (result, "ERROR")) {
+        ret = -4;
+    }
+
+    return ret;
 }
 
-int
-run_scan ()
+static int run_scan ()
 {
      // connect to mlm client
     auto client = mlm_pool.get();
@@ -109,9 +103,9 @@ run_scan ()
     }
 
     zuuid_t *uuid = zuuid_new ();
-    zmsg_t *request = req_scan (uuid);
-
-    int rv = client->sendto ("fty-discovery", "LAUNCHSCAN", 1000, &request);
+    zmsg_t *msg = req_scan (uuid);
+    int rv = client->sendto ("fty-discovery", "LAUNCHSCAN", 5, &msg);
+    zmsg_destroy(&msg);
 
     if (rv == -1) {
         zuuid_destroy (&uuid);
@@ -119,42 +113,34 @@ run_scan ()
         return -2;
     }
 
-    zmsg_t *resp = client->recv (zuuid_str_canonical (uuid), 5);
+    ZmsgGuard resp (client->recv (zuuid_str_canonical (uuid), 5));
     zuuid_destroy (&uuid);
+
     if (!resp) {
         log_fatal ("run_scan: client->recv (timeout = '5') returned NULL");
         return -3;
     }
-    char *result = zmsg_popstr (resp);
+
+    int ret = -5; // unexpected resp
+
+    ZstrGuard result (zmsg_popstr (resp));
     if (result) {
         if (streq (result, "OK")) {
-                zstr_free (&result);
-                return 0;
-            }
+            ret = 0; // ok
+        }
         else if (streq (result, "ERROR")) {
-            zstr_free (&result);
-            return -4;
+            ret = -4;
         }
         else if (streq (result, "STOPPING")) {
-            zstr_free (&result);
-            return -6;
+            ret = -6;
         }
         else if (streq (result, "RUNNING")) {
-            zstr_free (&result);
-            return -7;
-        }
-        else {
-            zstr_free (&result);
-            return -5;
+            ret = -7;
         }
     }
-    else
-        return -5;
-    zstr_free (&result);
-    zmsg_destroy (&resp);
-    return 0;
-}
 
+    return ret;
+}
 
 </%pre>
 <%request scope="global">
@@ -189,48 +175,55 @@ UserInfo user;
         http_die ("method-not-allowed", request.getMethod ().c_str () );
     }
 
-
-    if (rv == -1) {
-        std::string err =  TRANSLATE_ME ("mlmpool.get () failed.");
-        log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
-        http_die ("internal-error", err.c_str ());
+    if (rv != 0) {
+        if (rv == -1) {
+            std::string err =  TRANSLATE_ME ("mlmpool.get () failed.");
+            log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+            http_die ("internal-error", err.c_str ());
+        }
+        else
+        if (rv == -2) {
+            std::string err =  TRANSLATE_ME ("client->sendto () failed.");
+            log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+            http_die ("internal-error", err.c_str ());
+        }
+        else
+        if (rv == -3) {
+            std::string err =  TRANSLATE_ME ("client->recv () failed.");
+            log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+            http_die ("internal-error", err.c_str ());
+        }
+        else
+        if (rv == -4) {
+            std::string err =  TRANSLATE_ME ("fty-discovery returned error.");
+            log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+            http_die ("internal-error", err.c_str ());
+        }
+        else
+        if (rv == -5) {
+            std::string err =  TRANSLATE_ME ("fty-discovery returned malformed or unexpected message.");
+            log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+            http_die ("internal-error", err.c_str ());
+        }
+        else
+        if (rv == -6) {
+            std::string err =  TRANSLATE_ME ("fty-discovery precedent scan currently stopping.");
+            log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+            http_die ("internal-error", err.c_str ());
+        }
+        else
+        if (rv == -7) {
+            std::string err =  TRANSLATE_ME ("fty-discovery already have a scan running.");
+            log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+            http_die ("internal-error", err.c_str ());
+        }
+        else { // default
+            std::string err =  TRANSLATE_ME ("fty-discovery returned malformed or unexpected message.");
+            log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+            http_die ("internal-error", err.c_str ());
+        }
     }
-    else
-    if (rv == -2) {
-        std::string err =  TRANSLATE_ME ("client->sendto () failed.");
-        log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -3) {
-        std::string err =  TRANSLATE_ME ("client->recv () failed.");
-        log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -4) {
-        std::string err =  TRANSLATE_ME ("fty-discovery returned error.");
-        log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -5) {
-        std::string err =  TRANSLATE_ME ("fty-discovery returned malformed or unexpected message.");
-        log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -6) {
-        std::string err =  TRANSLATE_ME ("fty-discovery precedent scan currently stopping.");
-        log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -7) {
-        std::string err =  TRANSLATE_ME ("fty-discovery already have a scan running.");
-        log_error_audit ("Request %s scan_run FAILED", request.getMethod () == "POST" ? "CREATE" : "DELETE");
-        http_die ("internal-error", err.c_str ());
-    }
-    else
+    else {
         log_info_audit ("Request %s scan_run SUCCESS", request.getMethod () == "POST" ? "CREATE" : "DELETE");
+    }
 </%cpp>

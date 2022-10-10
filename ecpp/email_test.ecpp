@@ -60,7 +60,7 @@ UserInfo user;
     CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.empty () ? nullptr : audit_msg.c_str ());
 
     std::string checked_email;
-    unsigned _timeout = 60;
+    unsigned _timeout = 60; //sec
     {
         std::string email = qparam.param ("to");
 
@@ -80,10 +80,11 @@ UserInfo user;
 
         checked_email = email;
 
-        std::string _stimeout = qparam.param ("_timeout");
-
         try {
-            _timeout = uint32_t(std::stoi(_stimeout));
+            std::string aux = qparam.param ("_timeout");
+            if (!aux.empty()) {
+                _timeout = uint32_t(std::stoi(aux)); // sec
+            }
         }
         catch (const std::exception& e) {
             //pass
@@ -102,14 +103,14 @@ UserInfo user;
     // send message
     ZuuidGuard uuid (zuuid_new ());
     zmsg_t *send = s_smtp_GET_message (checked_email.c_str (), uuid);
-    int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 1000, &send);
+    int rv = client->sendto (AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 10, &send);
+    zmsg_destroy (&send);
     if (rv == -1)
     {
         log_fatal (
-                    "Error: client->sendto (address = '%s', subject = '%s', timeout = 1000) failed.",
-                        AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL");
+                    "Error: client->sendto (address = '%s', subject = '%s', timeout = %ds) failed.",
+                        AGENT_FTY_EMAIL_SENDMAIL_ONLY, "SENDMAIL", 10);
         std::string err =  TRANSLATE_ME ("client->sendto () failed");
-        zmsg_destroy (&send);
         log_error_audit ("Request CREATE email_test FAILED");
         http_die ("internal-error", err.c_str ());
     }

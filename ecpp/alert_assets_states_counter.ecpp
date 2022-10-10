@@ -220,10 +220,11 @@ zmsg_addstr (send_msg, "LIST");
 zmsg_addstr (send_msg, "ALL-ACTIVE");
 
 // send it
-if (mlm_client_sendto (client, AGENT_FTY_ALERT_LIST, RFC_ALERTS_LIST, NULL, 1000, &send_msg) != 0) {
+rv = mlm_client_sendto (client, AGENT_FTY_ALERT_LIST, RFC_ALERTS_LIST, NULL, 1000, &send_msg);
+zmsg_destroy (&send_msg);
+if (rv != 0) {
     log_debug ("mlm_client_sendto (address = '%s', subject = '%s', tracker = NULL, timeout = '%" PRIu32"') failed.",
         AGENT_FTY_ALERT_LIST, RFC_ALERTS_LIST, 1000);
-    zmsg_destroy (&send_msg);
     std::string err =  TRANSLATE_ME ("mlm_client_sendto() failed.");
     http_die ("internal-error", err.c_str ());
 }
@@ -265,6 +266,7 @@ if (!streq (mlm_client_subject (client), RFC_ALERTS_LIST)) {
 }
 log_debug (" subject ... OK.");
 log_debug (" number of frames = '%zu.", zmsg_size (recv_msg));
+
 // Check command. Can be LIST or ERROR
 ZstrGuard part (zmsg_popstr (recv_msg));
 if (streq (part, "LIST")) {
@@ -290,34 +292,35 @@ if (streq (part, "LIST")) {
         zmsg_t *decoded_zmsg = zmsg_decode (frame);
 #endif
         zframe_destroy (&frame);
+
         if (!decoded_zmsg) {
             log_error ("Bad frame, skipping");
-            frame = zmsg_pop (recv_msg);
+            frame = zmsg_pop (recv_msg); // next
             continue;
         }
+
         fty_proto_t *decoded = fty_proto_decode (&decoded_zmsg);
-        
+
+        bool processAlert = false; // eg. ignore it
         if (!decoded) {
             log_error ("Can't decode fty_proto");
-            frame = zmsg_pop (recv_msg);
-            continue;
         }
-        if (fty_proto_id (decoded) != FTY_PROTO_ALERT) {
+        else if (fty_proto_id (decoded) != FTY_PROTO_ALERT) {
             log_error ("message id is not FTY_PROTO_ALERT");
-            fty_proto_destroy (&decoded);
-            frame = zmsg_pop (recv_msg);
-            continue;
         }
-        if ((!checked_in.empty () && desired_elements.find (fty_proto_name (decoded)) == desired_elements.end ())) {
+        else if ((!checked_in.empty () && desired_elements.find (fty_proto_name (decoded)) == desired_elements.end ())) {
             log_debug ("skipping due to element_src '%s' not being in the list", fty_proto_name (decoded));
-            fty_proto_destroy (&decoded);
-            frame = zmsg_pop (recv_msg);
-            continue;
         }
-        if (std::string(decoded->state) != "ACTIVE"){
+        else if (!streq(fty_proto_state(decoded), "ACTIVE")) {
             log_debug ("'%s' is not active, skipping", fty_proto_name (decoded));
+        }
+        else {
+            processAlert = true;
+        }
+
+        if (!processAlert) {
             fty_proto_destroy (&decoded);
-            frame = zmsg_pop (recv_msg);
+            frame = zmsg_pop (recv_msg); // next
             continue;
         }
 
@@ -325,6 +328,7 @@ if (streq (part, "LIST")) {
         auto asset_element = DBAssets::select_asset_element_web_byName(connection, alert_asset_id.c_str());
         if (asset_element.status != 1) {
             log_error("%s", asset_element.msg.c_str());
+            fty_proto_destroy (&decoded);
             frame = zmsg_pop (recv_msg);
             continue;
         }
@@ -338,6 +342,7 @@ if (streq (part, "LIST")) {
         // check alert type
         if (!checked_type.empty() && alert_asset_type != checked_type) {
             log_debug("filter alert %s with type %s", alert_rule_name.c_str(), alert_asset_type.c_str());
+            fty_proto_destroy (&decoded);
             frame = zmsg_pop (recv_msg);
             continue;
         }
@@ -345,6 +350,7 @@ if (streq (part, "LIST")) {
         // check alert sub type
         if (checked_subtypes.size() > 0 && std::find(checked_subtypes.begin(), checked_subtypes.end(), alert_asset_sub_type) == checked_subtypes.end()) {
             log_debug("filter alert %s with sub type %s", alert_rule_name.c_str(), alert_asset_sub_type.c_str());
+            fty_proto_destroy (&decoded);
             frame = zmsg_pop (recv_msg);
             continue;
         }

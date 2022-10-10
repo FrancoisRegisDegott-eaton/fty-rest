@@ -55,34 +55,37 @@ void operator>>= (const cxxtools::SerializationInfo& si, gpio_params_t &params)
     si.getMember ("alarm_message") >>= params.alarm_message;
 }
 
-
 // scan request
-static zmsg_t *
-req_add (zuuid_t *uuid, gpio_params_t *params)
+static zmsg_t* req_add (zuuid_t *uuid, gpio_params_t *params)
 {
-    zmsg_t *msg = zmsg_new ();
-    zmsg_addstr (msg, zuuid_str_canonical (uuid));
+    const char* uuid_str = uuid ? zuuid_str_canonical (uuid) : "<null-uuid>";
+
+    log_debug ("uuid = %s", uuid_str);
     log_debug ("part_number = %s", params->part_number.c_str ());
-    zmsg_addstr (msg, strdup (params->part_number.c_str ()));
     log_debug ("manufacturer = %s", params->manufacturer.c_str ());
-    zmsg_addstr (msg, strdup (params->manufacturer.c_str ()));
     log_debug ("type = %s", params->type.c_str ());
-    zmsg_addstr (msg, strdup (params->type.c_str ()));
     log_debug ("normal_state = %s", params->normal_state.c_str ());
-    zmsg_addstr (msg, strdup (params->normal_state.c_str ()));
     log_debug ("gpx_direction = %s", params->gpx_direction.c_str ());
-    zmsg_addstr (msg, strdup (params->gpx_direction.c_str ()));
     log_debug ("gpx_power_source = %s", params->gpx_power_source.c_str ());
-    zmsg_addstr (msg, strdup (params->gpx_power_source.c_str ()));
     log_debug ("alarm_severity = %s", params->alarm_severity.c_str ());
-    zmsg_addstr (msg, strdup (params->alarm_severity.c_str ()));
     log_debug ("alarm_message = %s", params->alarm_message.c_str ());
-    zmsg_addstr (msg, strdup (params->alarm_message.c_str ()));
+
+    zmsg_t *msg = zmsg_new ();
+
+    zmsg_addstr (msg, uuid_str);
+    zmsg_addstr (msg, params->part_number.c_str ());
+    zmsg_addstr (msg, params->manufacturer.c_str ());
+    zmsg_addstr (msg, params->type.c_str ());
+    zmsg_addstr (msg, params->normal_state.c_str ());
+    zmsg_addstr (msg, params->gpx_direction.c_str ());
+    zmsg_addstr (msg, params->gpx_power_source.c_str ());
+    zmsg_addstr (msg, params->alarm_severity.c_str ());
+    zmsg_addstr (msg, params->alarm_message.c_str ());
+
     return msg;
 }
 
-int
-add_gpio (std::string json)
+static int add_gpio (const std::string& json)
 {
     // connect to mlm client
     auto client = mlm_pool.get();
@@ -103,8 +106,9 @@ add_gpio (std::string json)
     }
 
     zuuid_t *uuid = zuuid_new ();
-    zmsg_t *request = req_add (uuid, &params);
-    int rv = client->sendto ("fty-sensor-gpio", "GPIO_TEMPLATE_ADD", 1000, &request);
+    zmsg_t *msg = req_add (uuid, &params);
+    int rv = client->sendto ("fty-sensor-gpio", "GPIO_TEMPLATE_ADD", 5, &msg);
+    zmsg_destroy (&msg);
 
     if (rv == -1)
     {
@@ -115,31 +119,27 @@ add_gpio (std::string json)
 
     zmsg_t *resp = client->recv (zuuid_str_canonical (uuid), 5);
     zuuid_destroy (&uuid);
+
     if (!resp)
     {
         log_fatal ("add_gpio: client->recv (timeout = '5') returned NULL");
         return -3;
     }
+
+    int ret = -5; // unexpected result
+
     char *result = zmsg_popstr (resp);
-    if (result) {
-        if (streq (result, "OK")) {
-                zstr_free (&result);
-                return 0;
-            }
-        else if (streq (result, "ERROR")) {
-            zstr_free (&result);
-            return -4;
-        }
-        else {
-            zstr_free (&result);
-            return -5;
-        }
+    if (result && streq (result, "OK")) {
+        ret = 0;
     }
-    else
-        return -5;
+    else if (result && streq (result, "ERROR")) {
+        ret = -4;
+    }
+
     zstr_free (&result);
     zmsg_destroy (&resp);
-    return 0;
+
+    return ret;
 }
 </%pre>
 <%request scope="global">
@@ -170,36 +170,35 @@ UserInfo user;
     }
 
     int rv = add_gpio (json);
-    if (rv == -1) {
-        std::string err = TRANSLATE_ME ("mlmpool.get () failed.");
-        log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
-        http_die ("internal-error", err.c_str ());
+
+    if (rv == 0) { // success
+        log_info_audit ("Request CREATE add_gpio part_number %s SUCCESS", item.c_str ());
     }
-    else
-    if (rv == -2) {
-        std::string err = TRANSLATE_ME ("client->sendto () failed.");
-        log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -3) {
-        std::string err = TRANSLATE_ME ("client->recv () failed.");
-        log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
-        http_die ("internal-error", err.c_str ());
-    }
-    else
-    if (rv == -4) {
-        std::string err = TRANSLATE_ME ("<JSON object with keys part_number, manufacturer, type, normal_state, gpx_direction, gpx_power_source, alarm_message, alarm_severity>");
-        log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
-        http_die ("request-param-required", err.c_str ());
-    }
-    else
-    if (rv == -5) {
+    else { // failed
+        if (rv == -1) {
+            std::string err = TRANSLATE_ME ("mlmpool.get () failed.");
+            log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
+            http_die ("internal-error", err.c_str ());
+        }
+        if (rv == -2) {
+            std::string err = TRANSLATE_ME ("client->sendto () failed.");
+            log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
+            http_die ("internal-error", err.c_str ());
+        }
+        if (rv == -3) {
+            std::string err = TRANSLATE_ME ("client->recv () failed.");
+            log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
+            http_die ("internal-error", err.c_str ());
+        }
+        if (rv == -4) {
+            std::string err = TRANSLATE_ME ("<JSON object with keys part_number, manufacturer, type, normal_state, gpx_direction, gpx_power_source, alarm_message, alarm_severity>");
+            log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
+            http_die ("request-param-required", err.c_str ());
+        }
+
+        // default
         std::string err = TRANSLATE_ME ("fty-sensor-gpio returned malformed or unexpected message.");
         log_error_audit ("Request CREATE add_gpio part_number %s FAILED", item.c_str ());
         http_die ("internal-error", err.c_str ());
-    }
-    else {
-        log_info_audit ("Request CREATE add_gpio part_number %s SUCCESS", item.c_str ());
     }
 </%cpp>
