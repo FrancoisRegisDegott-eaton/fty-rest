@@ -44,7 +44,7 @@
  * fty-rest doesn't seem to have any way to simply drop files into the
  * file-system, keep this in memory until that can be reworked.
  */
-static const char* mapping = R"xxx(
+static const char* CONF_MAPPING_STR = R"xxx(
 # FTY
 
 # compatibility
@@ -344,7 +344,7 @@ void operator<<=(cxxtools::SerializationInfo& si, zconfig_t* root) {
     }
 }
 
-using ConfigEntry = std::pair<std::string, std::string>;
+using ConfigEntry = std::pair<std::string, std::string>; // <filepath,treepath> pair
 using ConfigMap = std::map<std::string, ConfigEntry>;
 
 cxxtools::SerializationInfo loadConfig(const ConfigMap& configMap, const std::string& key) {
@@ -353,27 +353,26 @@ cxxtools::SerializationInfo loadConfig(const ConfigMap& configMap, const std::st
         bios_throw("element-not-found", key.c_str());
     }
 
-    zconfig_t* root = zconfig_load(it->second.first.c_str());
+    auto filepath = it->second.first;
+    auto treepath = it->second.second;
+
+    zconfig_t* root = zconfig_load(filepath.c_str());
     if (!root) {
-        bios_throw("element-not-found", it->second.first.c_str());
+        bios_throw("element-not-found", filepath.c_str());
     }
 
-    zconfig_t* child = zconfig_locate(root, it->second.second.c_str());
-    if (!child) {
+    zconfig_t* child = zconfig_locate(root, treepath.c_str());
+
+    if (!child && (key == "ETN_GRAPHITE_SERVER_ADDR")) {
         // Workaround when graphite address does not exist with old configuration file (version < 2.4.0)
         // In this case return empty address instead return not found
-        if (key.compare("ETN_GRAPHITE_SERVER_ADDR") == 0) {
-            zconfig_put(root, it->second.second.c_str(), "");
-            child = zconfig_locate(root, it->second.second.c_str());
-            if (!child) {
-                zconfig_destroy(&root);
-                bios_throw("element-not-found", it->second.second.c_str());
-            }
-        }
-        else {
-            zconfig_destroy(&root);
-            bios_throw("element-not-found", it->second.second.c_str());
-        }
+        zconfig_put(root, treepath.c_str(), "");
+        child = zconfig_locate(root, treepath.c_str());
+    }
+
+    if (!child) {
+        zconfig_destroy(&root);
+        bios_throw("element-not-found", treepath.c_str());
     }
 
     cxxtools::SerializationInfo si;
@@ -431,7 +430,7 @@ ConfigMap loadMapping(zconfig_t* root) {
 
 </%pre>
 <%application scope="page">
-    std::mutex config_mux;
+    std::mutex config_mux; // see my_profile.ecpp
 </%application>
 <%request scope="global">
 UserInfo user;
@@ -439,8 +438,7 @@ UserInfo user;
 <%cpp>
 {
     // check user permissions
-    static const std::map <BiosProfile, std::string> PERMISSIONS =
-    {
+    static const std::map <BiosProfile, std::string> PERMISSIONS = {
         { BiosProfile::Admin,     "CR" }
     };
 
@@ -449,9 +447,13 @@ UserInfo user;
         audit_msg = std::string ("Request CREATE config FAILED");
     CHECK_USER_PERMISSIONS_OR_DIE_AUDIT (PERMISSIONS, audit_msg.empty () ? nullptr : audit_msg.c_str ());
 
-    zconfig_t* mappingZconfig = zconfig_str_load(mapping);
-    ConfigMap mapping = loadMapping(mappingZconfig);
-    zconfig_destroy(&mappingZconfig);
+    // init mapping (<key, <filepath, treepath>> map)
+    ConfigMap mapping;
+    {
+        zconfig_t* config = zconfig_str_load(CONF_MAPPING_STR);
+        mapping = loadMapping(config);
+        zconfig_destroy(&config);
+    }
 
     try {
         ///////////////////
@@ -462,17 +464,19 @@ UserInfo user;
             if (key.empty()) {
                 bios_throw ("request-param-required", "key");
             }
-            cxxtools::JsonSerializer serializer (reply.out ());
-            serializer.beautify (true);
 
-            cxxtools::SerializationInfo si;
             cxxtools::SerializationInfo configSi;
             configSi.setName("config");
             configSi.addMember("key") <<= key;
             configSi.addMember("") <<= loadConfig(mapping, key); // "value" key added inside loadConfig()
+
+            cxxtools::SerializationInfo si;
             si.addMember("") <<= configSi;
 
-            serializer.serialize (si).finish ();
+            cxxtools::JsonSerializer serializer(reply.out());
+            serializer.beautify(true);
+            serializer.serialize(si).finish();
+
             return HTTP_OK;
         }
 
@@ -480,10 +484,12 @@ UserInfo user;
         ///     POST      //
         ////////////////////
         else if (request.isMethodPOST ()) {
-            std::stringstream input (request.getBody (), std::ios_base::in);
-            cxxtools::JsonDeserializer deserializer (input);
             cxxtools::SerializationInfo request_doc;
-            deserializer.deserialize (request_doc);
+            {
+                std::stringstream input (request.getBody (), std::ios_base::in);
+                cxxtools::JsonDeserializer deserializer (input);
+                deserializer.deserialize (request_doc);
+            }
 
             if (request_doc.category() != cxxtools::SerializationInfo::Object) {
                 bios_throw("bad-request-document", "Request document must be an object.");
@@ -493,9 +499,9 @@ UserInfo user;
             for (const auto& si : request_doc) {
                 saveConfig(mapping, si.name(), si);
             }
-</%cpp>
-{}
-<%cpp>
+
+            reply.out() << "{}";
+
             log_info_audit ("Request CREATE config SUCCESS");
             return HTTP_OK;
         }
@@ -512,5 +518,8 @@ UserInfo user;
         }
         http_die ("bad-request-document", e.what ());
     }
+
+    // secure
+    http_die ("method-not-allowed", request.getMethod().c_str());
 }
 </%cpp>
