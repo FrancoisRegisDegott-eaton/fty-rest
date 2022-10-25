@@ -36,7 +36,7 @@
     #define DEFAULT_PREFERENCES "\"preferences\":{\"email\" : \" \", \"telephone\" : \" \", \"organization\" : \" \", \"date\":\"DDMMYYYY\", \"temperature\":\"C\", \"language\":\"en-us\", \"time\":\"24h\"}"
 </%pre>
 <%application scope="page">
-    std::mutex config_mux;
+    std::mutex config_mux; // see config.ecpp
 </%application>
 <%request scope="global">
     UserInfo user;
