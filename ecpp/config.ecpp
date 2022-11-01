@@ -286,7 +286,7 @@ void operator<<=(zconfig_t* root, const cxxtools::SerializationInfo& si) {
 
         case cxxtools::SerializationInfo::Value:
             si.getValue(value);
-            zconfig_set_value(root, "%s", quoteEncode(value).c_str());
+            zconfig_set_value(root, "%s", value.c_str());
             break;
 
         case cxxtools::SerializationInfo::Object:
@@ -316,16 +316,15 @@ void operator<<=(cxxtools::SerializationInfo& si, zconfig_t* root) {
             si.setNull();
         }
         else {
-            std::string decodedVal = quoteDecode(std::string(value));
             try {
                 size_t pos = 0;
-                si.setValue(std::stoi(decodedVal, &pos));
-                if (pos != decodedVal.size()) {
-                    si.setValue(decodedVal);
+                si.setValue(std::stoi(value, &pos));
+                if (pos != strlen(value)) {
+                    si.setValue(value);
                 }
             }
             catch (std::invalid_argument& e) {
-                si.setValue(decodedVal);
+                si.setValue(value);
             }
         }
     }
@@ -381,11 +380,17 @@ cxxtools::SerializationInfo loadConfig(const ConfigMap& configMap, const std::st
     si <<= child;
     si.setName("value");
 
+    if(key == "BIOS_SMTP_PASSWD" || key == "BIOS_SMTP_USER") {
+        std::string pw;
+        si.getValue(pw);
+        si.setValue(quoteDecode(pw));
+    }
+
     zconfig_destroy(&root);
     return si;
 }
 
-void saveConfig(const ConfigMap& configMap, const std::string& key, const cxxtools::SerializationInfo& in) {
+void saveConfig(const ConfigMap& configMap, const std::string& key, cxxtools::SerializationInfo in) {
     auto it = configMap.find(key);
     if (it == configMap.end()) {
         bios_throw("element-not-found", key.c_str());
@@ -406,6 +411,12 @@ void saveConfig(const ConfigMap& configMap, const std::string& key, const cxxtoo
          */
         zconfig_put(root, it->second.second.c_str(), "");
         child = zconfig_locate(root, it->second.second.c_str());
+    }
+
+    if(key == "BIOS_SMTP_PASSWD" || key == "BIOS_SMTP_USER") {
+        std::string value;
+        in.getValue(value);
+        in.setValue(quoteEncode(value));
     }
 
     child <<= in;
