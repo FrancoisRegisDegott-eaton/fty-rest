@@ -26,35 +26,23 @@
  * \brief  returns Current values of some metrics for datacenters
  */
  #><%pre>
-#include <stdexcept>
-#include <cxxtools/split.h>
-#include <malamute.h>
-#include <fty_proto.h>
-#include <fty_log.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-#include <math.h>
-#include <fty_common_rest_helpers.h>
-#include <fty_common_db_asset.h>
-#include <fty_common_mlm_utils.h>
-
-#include <fty_common_asset_types.h>
-#include <fty_common_macros.h>
-#include <fty_shm.h>
-
 #include "shared/data.h"
 #include "shared/utilspp.h"
 
-#define RT_PROVIDER_PEER "fty-metric-cache"
-#define RT_SUBJECT "latest-rt-data"
+#include <fty_shm.h>
+#include <fty_proto.h>
+#include <fty_log.h>
+#include <fty_common_rest_helpers.h>
+#include <cxxtools/split.h>
 
-
-
-// ATTENTION!!! for trends:
-//  first one should be average, second one is raw measurement
-static const std::map<std::string, const std::string> PARAM_TO_SRC {
+//
+// ATTENTION
+// trend_ (sep '/'):first one should be average, second one is raw measurement
+//
+static const std::map<std::string, const std::string> PARAM_TO_SRC
+{
     {"power", "realpower.default"},
+
     {"avg_power_last_day", "realpower.default_arithmetic_mean_24h"},
     {"avg_power_last_week", "realpower.default_arithmetic_mean_7d"},
     {"avg_power_last_month", "realpower.default_arithmetic_mean_30d"},
@@ -76,6 +64,7 @@ static const std::map<std::string, const std::string> PARAM_TO_SRC {
     {"consumption_last_month", "realpower.default_consumption_30d"},
 
     {"temperature", "average.temperature"},
+
     {"avg_temperature_last_day",  "average.temperature_arithmetic_mean_24h"},
     {"avg_temperature_last_week", "average.temperature_arithmetic_mean_7d"},
     {"avg_temperature_last_month", "average.temperature_arithmetic_mean_30d"},
@@ -93,6 +82,7 @@ static const std::map<std::string, const std::string> PARAM_TO_SRC {
     {"trend_temperature_last_month", "average.temperature_arithmetic_mean_30d/average.temperature"},
 
     {"humidity", "average.humidity"},
+
     {"avg_humidity_last_day", "average.humidity_arithmetic_mean_24h"},
     {"avg_humidity_last_week", "average.humidity_arithmetic_mean_7d"},
     {"avg_humidity_last_month", "average.humidity_arithmetic_mean_30d"},
@@ -110,96 +100,51 @@ static const std::map<std::string, const std::string> PARAM_TO_SRC {
     {"trend_humidity_last_month", "average.humidity_arithmetic_mean_30d/average.humidity"},
 };
 
-const std::set<std::string> interesting_sources {
-    "realpower.default",
-    "realpower.default_arithmetic_mean_24h",
-    "realpower.default_arithmetic_mean_7d",
-    "realpower.default_arithmetic_mean_30d",
-    "realpower.default_min_24h",
-    "realpower.default_min_7d",
-    "realpower.default_min_30d",
-    "realpower.default_max_24h",
-    "realpower.default_max_7d",
-    "realpower.default_max_30d",
-    "realpower.default_arithmetic_mean_24h",
-    "realpower.default_arithmetic_mean_7d",
-    "realpower.default_arithmetic_mean_30d",
-    "realpower.default_consumption_24h",
-    "realpower.default_consumption_7d",
-    "realpower.default_consumption_30d",
-    "average.temperature",
-    "average.temperature_arithmetic_mean_24h",
-    "average.temperature_arithmetic_mean_7d",
-    "average.temperature_arithmetic_mean_30d",
-    "average.temperature_min_24h",
-    "average.temperature_min_7d",
-    "average.temperature_min_30d",
-    "average.temperature_max_24h",
-    "average.temperature_max_7d",
-    "average.temperature_max_30d",
-    "average.temperature_arithmetic_mean_24h",
-    "average.temperature_arithmetic_mean_7d",
-    "average.temperature_arithmetic_mean_30d",
-    "average.humidity_arithmetic_mean_24h",
-    "average.humidity_arithmetic_mean_7d",
-    "average.humidity_arithmetic_mean_30d",
-    "average.humidity",
-    "average.humidity_min_24h",
-    "average.humidity_min_7d",
-    "average.humidity_min_30d",
-    "average.humidity_max_24h",
-    "average.humidity_max_7d",
-    "average.humidity_max_30d",
-    "average.humidity_arithmetic_mean_24h",
-    "average.humidity_arithmetic_mean_7d",
-    "average.humidity_arithmetic_mean_30d"
-};
-
-static double s_get_trend_value (
-    const std::map<std::string, std::string> &dataDc,
-    const std::string &source
-)
-{
-    std::vector<std::string> items;
-    cxxtools::split('/', PARAM_TO_SRC.at(source), std::back_inserter(items));
-    if( items.size() != 2 ) {
-        return 0.0f;
-    }
-
-    double value_actual = NAN;
-    auto it = dataDc.find(items.at(1));
-    if ( it != dataDc.cend() ) {
-        value_actual = std::stod (it->second);
-    }
-
-    double value_average = NAN;
-    it = dataDc.find(items.at(0));
-    if ( it != dataDc.cend() ) {
-        value_average = std::stod (it->second);
-    }
-
-    double val = NAN;
-    if ( value_average != 0 ) {
-        val = round( (value_actual - value_average ) / ( value_average ) * 1000.0 ) / 10.0 ;
-    }
-    return val;
-}
-
 static bool s_is_valid_param(const std::string& p)
 {
     return PARAM_TO_SRC.count(p) != 0;
 }
 
-static std::string s_get_valid_param (void)
+static bool is_trend(const std::string &p)
 {
-    return utils::join_keys_map (PARAM_TO_SRC, ", ");
+    return p.find("trend_") == 0; // 'trend_' prefix
 }
 
-static bool isTrend (const std::string &key)
+static double s_compute_trend_value (
+    const std::string &p, // trend param
+    const std::map<std::string, std::string> &metrics // <name, value>
+)
 {
-    return ( key.substr(0,5) == "trend" );
-}
+    double value = NAN; // default
 
+    do {
+        std::vector<std::string> items;
+        cxxtools::split('/', PARAM_TO_SRC.at(p), std::back_inserter(items));
+        if (items.size() != 2) {
+            break;
+        }
+
+        auto it0 = metrics.find(items.at(0));
+        auto it1 = metrics.find(items.at(1));
+        if ((it0 == metrics.cend()) || (it1 == metrics.cend())) {
+            break;
+        }
+
+        double average = std::stod(it0->second);
+        double current = std::stod(it1->second);
+        if (average == 0.0) {
+            break;
+        }
+
+        // trend (%)
+        value = ((current - average) / average) * 100.0;
+        // trunc to two decimals
+        value = round(value * 100) / 100;
+        break;
+    } while(0);
+
+    return value;
+}
 </%pre>
 <%thread scope="global">
 asset_manager asset_mgr;
@@ -245,129 +190,133 @@ bool database_ready;
         // sanitize params end
     }
 
-    // arg1 is a single value OR a comma-separated list of element identifiers
+    // arg1 is a single value OR a comma-separated list of element identifiers (DC iNames's)
     std::vector<std::string> DCs;
-    cxxtools::split(",", checked_arg1, std::back_inserter(DCs));
+    {
+        cxxtools::split(",", checked_arg1, std::back_inserter(DCs));
+    }
 
     // arg2 is a single value OR a comma-separated list formed
     // from a list of permissible values (PARAM_TO_SRC)
     std::vector<std::string> requestedParams;
-    cxxtools::split(",", checked_arg2, std::back_inserter(requestedParams));
+    {
+        cxxtools::split(",", checked_arg2, std::back_inserter(requestedParams));
 
-    // check requestedParams inputs
-    for (const std::string& param: requestedParams) {
-        if (!s_is_valid_param (param) ) {
-            http_die ("request-param-bad", "arg2",
-                std::string ("value '").append (param).append ("'").c_str (),
-                std::string ("one of the following values: [").append (s_get_valid_param ()).append ("].").c_str ());
+        // check requestedParams inputs
+        for (const std::string& param: requestedParams) {
+            if (!s_is_valid_param(param)) {
+                std::string all_valid_params = utils::join_keys_map (PARAM_TO_SRC, ", ");
+                http_die ("request-param-bad", "arg2",
+                    std::string ("value '").append (param).append ("'").c_str (),
+                    std::string ("one of the following values: [").append(all_valid_params).append("].").c_str ());
+            }
         }
     }
 
-    // check that DC exists
-    auto allDcsShort = asset_mgr.get_items1("datacenter", "");
-    if (allDcsShort.status == 0) {
-        std::string err =  TRANSLATE_ME ("Error while retrieving information about datacenters.");
-        http_die ("internal-error", err.c_str ());
-    }
-
-    std::vector<std::string> DCNames;
-    std::vector<uint32_t> DCIDs;
-
-    for (auto const& item : DCs) {
-        int64_t dbid = DBAssets::name_to_asset_id (item);
-        if (dbid == -1) {
-            http_die ("element-not-found", item.c_str ());
-        }
-        if (dbid == -2) {
-            std::string err =  TRANSLATE_ME ("Connecting to database failed.");
+    // check that DCs exists
+    std::map<std::string, uint32_t> DCIDs;
+    {
+        auto allDcsShort = asset_mgr.get_items1("datacenter", "");
+        if (allDcsShort.status == 0) {
+            std::string err =  TRANSLATE_ME ("Error while retrieving information about datacenters.");
             http_die ("internal-error", err.c_str ());
         }
-        auto it = allDcsShort.item.find (uint32_t(dbid));
-        if (it == allDcsShort.item.end()) {
-            http_die ("element-not-found", item.c_str ());
-        }
 
-        DCIDs.push_back(uint32_t(dbid));
-        DCNames.push_back (it->second);
+        for (auto const& dc_iName : DCs) {
+            int64_t dbid = DBAssets::name_to_asset_id (dc_iName);
+            if (dbid == -1) {
+                http_die ("element-not-found", dc_iName.c_str ());
+            }
+            if (dbid == -2) {
+                std::string err =  TRANSLATE_ME ("Connecting to database failed.");
+                http_die ("internal-error", err.c_str ());
+            }
+            auto it = allDcsShort.item.find (uint32_t(dbid));
+            if (it == allDcsShort.item.end()) {
+                http_die ("element-not-found", dc_iName.c_str ());
+            }
+
+            DCIDs.emplace(dc_iName, uint32_t(dbid)); // dc_id
+        }
     }
 
-    std::map<std::string, std::map<std::string, std::string>> dataDc{};
-
-    // get current data for all DCs
-    for ( const auto &aDc : DCNames ) {
-        dataDc.emplace (aDc, std::map<std::string,std::string>());
-
+    // get datas for DCs
+    std::map<std::string, std::map<std::string, std::string>> dataDc;
+    for (const auto& dc_iName : DCs) {
+        // get metrics related to dc
+        std::map<std::string, std::string> dcMetrics;
         {
-            // make sure we delete metrics as soon as possible
             fty::shm::shmMetrics metrics;
-            if (fty::shm::read_metrics(aDc, ".*", metrics) != 0) {
+            if (fty::shm::read_metrics(dc_iName, ".*", metrics) != 0) {
                 std::string err =  TRANSLATE_ME ("See log for more detail");
                 http_die ("internal-error", err.c_str ());
             }
 
             for (auto &metric : metrics) {
-                if ( interesting_sources.count ( fty_proto_type (metric)) != 0 ) {
-                    dataDc.at(aDc).emplace (fty_proto_type (metric), fty_proto_value (metric) );
-                }
+                dcMetrics.emplace(fty_proto_type(metric), fty_proto_value(metric));
             }
         }
 
-        if (!dataDc.at(aDc).empty()) { // available metrics on aDc
-            for ( size_t P = 0; P < requestedParams.size(); P++ ) {
-                const std::string& key = requestedParams[P];
-                // key:value
-                if ( dataDc.at(aDc).count(PARAM_TO_SRC.at(key)) == 0 ) {
-                    if ( isTrend (key) ) {
-                        double value = s_get_trend_value(dataDc.at(aDc), key);
-                        dataDc.at(aDc).emplace (key, std::isnan (value)? "null" : std::to_string (value));
-                    } else {
-                        dataDc.at(aDc).emplace (key, "null");
-                    }
-                }
-                else {
-                    dataDc.at(aDc).emplace(key, dataDc.at(aDc).at(PARAM_TO_SRC.at(key)));
-                }
+        dataDc.emplace(dc_iName, std::map<std::string, std::string>());
+
+        for (const auto& param : requestedParams) {
+            std::string value = "NaN"; // default (undefined)
+            if (is_trend(param)) {
+                double tv = s_compute_trend_value(param, dcMetrics);
+                value = std::to_string(tv);
             }
+            else if (dcMetrics.count(PARAM_TO_SRC.at(param)) != 0) {
+                value = dcMetrics.at(PARAM_TO_SRC.at(param));
+            }
+
+            // append param/value
+            dataDc.at(dc_iName).emplace(param, value);
         }
     }
 
-    // So we finally have all values in "dataDc"
-    // lets just print them
+    // All requestedParams values are in dataDc
+    // Serialize
 
     std::string json = "{\"datacenter_indicators\": ["; // open the main object
 
-    for ( size_t D = 0 ; D < DCs.size(); D++ ) {
+    bool first = true;
+    for (const auto& dc_iName : DCs) {
+        auto dc_id = DCIDs.at(dc_iName);
 
-        std::pair<std::string,std::string> dc_names = DBAssets::id_to_name_ext_name (DCIDs[D]);
-        if (dc_names.first.empty () && dc_names.second.empty ()) {
-            std::string err =  TRANSLATE_ME ("Database failure");
-            http_die ("internal-error", err.c_str ());
-        }
-
-        json += "{";
-        json += "\"id\": \"";
-        json += DCNames[D];
-        json += "\",";
-        json += "\"name\": \"";
-        json += dc_names.second;
-        json += "\",";
-
-        for ( const auto &row : dataDc.at(DCNames[D]) ) {
-            // data contains topics and it aliases, but we need to print only aliases
-            if ( PARAM_TO_SRC.count(row.first) == 1 ) {
-                // ACE: "nan" should never appear, but system doesn't agree with us
-                // If double value is "nan" -> then actually we do not have value
-                // JSON do not accept "nan", but "null"
-                std::string data1 = row.second;
-                std::transform(data1.begin(), data1.end(), data1.begin(), ::tolower); // who know if it would be NaN or nan or ...
-                json += "\"" + row.first + "\":" + ( data1 == "nan" ? "null" : row.second );
-                json += ",";
+        std::string dc_friendlyName;
+        {
+            std::pair<std::string,std::string> p = DBAssets::id_to_name_ext_name(dc_id);
+            if (p.first != dc_iName) {
+                std::string err = TRANSLATE_ME ("Database failure");
+                http_die ("internal-error", err.c_str ());
             }
+            dc_friendlyName = p.second;
         }
 
-        json.back() = ' ' ; // rm trailing comma
-        json += "}"; // DC object is finished
-        json += ( D < DCs.size() -1) ? "," : "";
+        if (!first) {
+            json += ","; // objects sep
+        }
+
+        json += "{"; // open object
+        json += "\"id\": \"" + dc_iName + "\",";
+        json += "\"name\": \"" + dc_friendlyName + "\",";
+
+        for (const auto& pair : dataDc.at(dc_iName)) {
+            std::string param = pair.first;
+            std::string value = pair.second;
+
+            // JSON do not accept "nan", "NaN", but "null"
+            if ((value == "NaN") || (value == "nan")) {
+                value = "null";
+            }
+
+            json += "\"" + param + "\":" + value + ",";
+        }
+
+        json.pop_back(); // rm trailing comma
+        json += "}"; // close object
+
+        first = false;
     }
 
     json += "]}"; // close the main object
