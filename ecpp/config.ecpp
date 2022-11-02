@@ -289,7 +289,7 @@ void operator<<=(zconfig_t* root, const cxxtools::SerializationInfo& si) {
                 si.getValue(value);
                 std::string encodedValue(value);
                 if( (si.name() == "BIOS_SMTP_PASSWD") || (si.name() == "BIOS_SMTP_USER") ) {
-                    encodedValue = quoteEncode(value);
+                    encodedValue = quotecodec::quoteEncode(value);
                 }
                 zconfig_set_value(root, "%s", encodedValue.c_str());
             }
@@ -323,7 +323,7 @@ void operator<<=(cxxtools::SerializationInfo& si, zconfig_t* root) {
         }
         else {
             std::string decodedValue(value);
-            decodedValue = quoteDecode(value);
+            decodedValue = quotecodec::quoteDecode(value);
             try {
                 size_t pos = 0;
                 si.setValue(std::stoi(decodedValue, &pos));
