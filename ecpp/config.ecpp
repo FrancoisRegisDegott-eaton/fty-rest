@@ -37,6 +37,7 @@
 #include <fty_common_rest_helpers.h>
 #include <fty_common_rest_utils_web.h>
 #include <fty_common_rest_audit_log.h>
+#include <fty_common_quote_codec.h>
 
 /**
  * FIXME: Move that file into the file-system and maybe split it per components.
@@ -284,8 +285,14 @@ void operator<<=(zconfig_t* root, const cxxtools::SerializationInfo& si) {
             break;
 
         case cxxtools::SerializationInfo::Value:
-            si.getValue(value);
-            zconfig_set_value(root, "%s", value.c_str());
+            {
+                si.getValue(value);
+                std::string encodedValue(value);
+                if( (si.name() == "BIOS_SMTP_PASSWD") || (si.name() == "BIOS_SMTP_USER") ) {
+                    encodedValue = quotecodec::quoteEncode(value);
+                }
+                zconfig_set_value(root, "%s", encodedValue.c_str());
+            }
             break;
 
         case cxxtools::SerializationInfo::Object:
@@ -315,15 +322,20 @@ void operator<<=(cxxtools::SerializationInfo& si, zconfig_t* root) {
             si.setNull();
         }
         else {
+            std::string decodedValue(value);
+            std::string configName(zconfig_name(root));
+            if( (configName == "BIOS_SMTP_PASSWD") || (configName == "BIOS_SMTP_USER") ) {
+                decodedValue = quotecodec::quoteDecode(value);
+            }
             try {
                 size_t pos = 0;
-                si.setValue(std::stoi(value, &pos));
-                if (pos != strlen(value)) {
-                    si.setValue(value);
+                si.setValue(std::stoi(decodedValue, &pos));
+                if (pos != decodedValue.size()) {
+                    si.setValue(decodedValue);
                 }
             }
             catch (std::invalid_argument& e) {
-                si.setValue(value);
+                si.setValue(decodedValue);
             }
         }
     }
