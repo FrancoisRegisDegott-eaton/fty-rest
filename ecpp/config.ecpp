@@ -270,6 +270,12 @@ zconfig_remove (zconfig_t **self_p)
     *self_p = NULL;
 }
 
+zconfig_t* zconfig_parent (zconfig_t* self)
+{
+    return self ? self->parent : NULL;
+}
+
+// set zconfig_t* from cxxtools::SerializationInfo
 void operator<<=(zconfig_t* root, const cxxtools::SerializationInfo& si) {
     while (zconfig_child(root)) {
         zconfig_t* childRoot = zconfig_child(root);
@@ -287,11 +293,13 @@ void operator<<=(zconfig_t* root, const cxxtools::SerializationInfo& si) {
         case cxxtools::SerializationInfo::Value:
             {
                 si.getValue(value);
-                std::string encodedValue(value);
-                if( (si.name() == "BIOS_SMTP_PASSWD") || (si.name() == "BIOS_SMTP_USER") ) {
-                    encodedValue = quotecodec::quoteEncode(value);
+
+                // IPMPROG-4911: handle '"' in SMTP PASSWD/USER
+                if ((si.name() == "BIOS_SMTP_PASSWD") || (si.name() == "BIOS_SMTP_USER")) {
+                    value = quotecodec::quoteEncode(value);
                 }
-                zconfig_set_value(root, "%s", encodedValue.c_str());
+
+                zconfig_set_value(root, "%s", value.c_str());
             }
             break;
 
@@ -315,27 +323,34 @@ void operator<<=(zconfig_t* root, const cxxtools::SerializationInfo& si) {
     }
 }
 
+// set cxxtools::SerializationInfo from zconfig_t*
 void operator<<=(cxxtools::SerializationInfo& si, zconfig_t* root) {
     if (zconfig_child(root) == nullptr) {
-        const char* value = zconfig_value(root);
-        if (!value) {
+        const char* zc_value = zconfig_value(root);
+        if (!zc_value) {
             si.setNull();
         }
         else {
-            std::string decodedValue(value);
-            std::string configName(zconfig_name(root));
-            if( (configName == "BIOS_SMTP_PASSWD") || (configName == "BIOS_SMTP_USER") ) {
-                decodedValue = quotecodec::quoteDecode(value);
+            std::string value(zc_value);
+
+            // IPMPROG-4911: handle '"' in SMTP PASSWD/USER
+            if (zconfig_parent(root)) {
+                std::string parent{zconfig_name(zconfig_parent(root))};
+                std::string name{zconfig_name(root)};
+                if ((parent == "smtp") && ((name == "password") || (name == "user"))) {
+                    value = quotecodec::quoteDecode(value);
+                }
             }
+
             try {
                 size_t pos = 0;
-                si.setValue(std::stoi(decodedValue, &pos));
-                if (pos != decodedValue.size()) {
-                    si.setValue(decodedValue);
+                si.setValue(std::stoi(value, &pos));
+                if (pos != value.size()) {
+                    si.setValue(value);
                 }
             }
             catch (std::invalid_argument& e) {
-                si.setValue(decodedValue);
+                si.setValue(value);
             }
         }
     }
