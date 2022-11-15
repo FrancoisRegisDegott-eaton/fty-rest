@@ -95,6 +95,19 @@ foreach(file ${MAPPING_FILES})
   install(FILES ${f_out} DESTINATION ${CMAKE_INSTALL_FULL_SYSCONFDIR}/tntnet/bios.d/)
 endforeach()
 
+
+##############################################################################################################
+
+#install config file
+
+etn_configure_file(
+    src/conf/fty-timezone.cfg.in
+    TARGET ${PROJECT_NAME}
+    DESTINATION "${CMAKE_INSTALL_SYSCONFDIR}/fty-timezone/"
+)
+
+##############################################################################################################
+
 # Install tntnet mapping files examples in usr/share/fty-rest/examples
 # tntnet.xml.example: concat of all mapping files *in order*
 set(TNTNET_XML_EXAMPLE ${PROJECT_BINARY_DIR}/tntnet.xml.example)
