@@ -200,7 +200,7 @@ ETN_AUTOMATION_NOTIF_EMAIL = ""
 # timezone
 BIOS_SERVER_TIMEZONE = ""
     filepath = "/etc/fty/fty-datetime.cfg"
-    treepath = "/server/timezone"
+    treepath = "server/timezone"
 )xxx";
 
 // JSON <-> ZPL helpers
