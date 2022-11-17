@@ -196,6 +196,11 @@ ETN_GRAPHITE_ACTIVATE = ""
 ETN_AUTOMATION_NOTIF_EMAIL = ""
     filepath = "/etc/fty/etn-automation.cfg"
     treepath = "notifications"
+
+# timezone
+BIOS_SERVER_TIMEZONE = ""
+    filepath = "/etc/fty/fty-datetime.cfg"
+    treepath = "/server/timezone"
 )xxx";
 
 // JSON <-> ZPL helpers

@@ -1,4 +1,0 @@
-#   fty-timezone configuration
-
-timezone = ""
-    tz = "Etc/UTC"
