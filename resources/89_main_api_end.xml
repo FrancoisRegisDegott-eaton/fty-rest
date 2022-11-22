@@ -117,6 +117,7 @@
     <mapping>
         <target>config@libfty_rest</target>
         <url>^/api/v1/admin/config.*$</url>
+        <method>(GET|POST)</method>
     </mapping>
 
     <!-- POST admin/scan -->

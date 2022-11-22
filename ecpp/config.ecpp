@@ -472,9 +472,15 @@ UserInfo user;
     // check user permissions
     static const std::map <BiosProfile, std::string> PERMISSIONS = {
         { BiosProfile::Admin,     "CR" },
-        { BiosProfile::Dashboard, "R" },
+        { BiosProfile::Dashboard, "R" }
     };
 
+    if(user.profile() == BiosProfile::Dashboard && 
+       qparam.param("key") != "BIOS_SERVER_TIMEZONE") {
+        http_die("You are not authenticated or your rights are insufficient.");
+    }
+
+    log_debug("sinan debug profile : %d\n", user.profile());
     std::string audit_msg;
     if (request.getMethod () == "POST")
         audit_msg = std::string ("Request CREATE config FAILED");
