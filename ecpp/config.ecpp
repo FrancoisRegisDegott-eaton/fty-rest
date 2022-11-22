@@ -471,7 +471,8 @@ UserInfo user;
 {
     // check user permissions
     static const std::map <BiosProfile, std::string> PERMISSIONS = {
-        { BiosProfile::Admin,     "CR" }
+        { BiosProfile::Admin,     "CR" },
+        { BiosProfile::Dashboard, "R" },
     };
 
     std::string audit_msg;
