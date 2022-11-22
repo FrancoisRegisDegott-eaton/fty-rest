@@ -470,14 +470,15 @@ UserInfo user;
 <%cpp>
 {
     // check user permissions
-    static const std::map <BiosProfile, std::string> PERMISSIONS = {
+    std::map <BiosProfile, std::string> PERMISSIONS = {
         { BiosProfile::Admin,     "CR" },
-        { BiosProfile::Dashboard, "R" }
     };
 
-    if(user.profile() == BiosProfile::Dashboard && 
-       qparam.param("key") != "BIOS_SERVER_TIMEZONE") {
-        http_die("You are not authenticated or your rights are insufficient.");
+    if( (user.profile() == BiosProfile::Dashboard) && 
+        (qparam.param("key") == "BIOS_SERVER_TIMEZONE") &&
+        (request.getMethod() == "GET") ) {
+
+        PERMISSIONS.emplace(BiosProfile::Dashboard, "R");
     }
 
     std::string audit_msg;
