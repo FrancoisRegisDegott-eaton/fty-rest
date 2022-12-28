@@ -199,7 +199,7 @@ ETN_AUTOMATION_NOTIF_EMAIL = ""
 
 # timezone
 BIOS_SERVER_TIMEZONE = ""
-    filepath = "/etc/fty/fty-datetime.cfg"
+    filepath = "/etc/fty/fty-timezone.cfg"
     treepath = "server/timezone"
 )xxx";
 
