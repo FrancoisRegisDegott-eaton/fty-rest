@@ -196,6 +196,11 @@ ETN_GRAPHITE_ACTIVATE = ""
 ETN_AUTOMATION_NOTIF_EMAIL = ""
     filepath = "/etc/fty/etn-automation.cfg"
     treepath = "notifications"
+
+# timezone
+BIOS_SERVER_TIMEZONE = ""
+    filepath = "/etc/fty/fty-timezone.cfg"
+    treepath = "server/timezone"
 )xxx";
 
 // JSON <-> ZPL helpers
@@ -465,9 +470,16 @@ UserInfo user;
 <%cpp>
 {
     // check user permissions
-    static const std::map <BiosProfile, std::string> PERMISSIONS = {
-        { BiosProfile::Admin,     "CR" }
+    std::map <BiosProfile, std::string> PERMISSIONS = {
+        { BiosProfile::Admin,     "CR" },
     };
+
+    if( (user.profile() == BiosProfile::Dashboard) && 
+        (qparam.param("key") == "BIOS_SERVER_TIMEZONE") &&
+        (request.getMethod() == "GET") ) {
+
+        PERMISSIONS.emplace(BiosProfile::Dashboard, "R");
+    }
 
     std::string audit_msg;
     if (request.getMethod () == "POST")
