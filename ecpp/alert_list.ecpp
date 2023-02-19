@@ -366,6 +366,13 @@ if (streq (part, "LIST")) {
 %       frame = zmsg_pop (recv_msg);
 %       continue;
 %   }
+%   // **drop** alert on cops (exclusively dedicated to automation)
+%   if (strstr(fty_proto_name (decoded), "cops-") == fty_proto_name (decoded)) {
+%       log_debug ("skipping due to element_src '%s' is a cops asset", fty_proto_name (decoded));
+%       fty_proto_destroy (&decoded);
+%       frame = zmsg_pop (recv_msg);
+%       continue;
+%   }
 %
 %   std::string jsonAlert = getJsonAlert(connection,decoded);
 %
